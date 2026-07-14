@@ -13,10 +13,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Starter Project",
-  description: "A clean starting point for building your site.",
+  title: "Agent Office — AI 팀 운영 시뮬레이터",
+  description: "AI 서브에이전트의 업무, 진행률, 지시와 승인 흐름을 픽셀 오피스에서 운영하세요.",
   other: {
-    "codex-preview": "development",
+    "app-runtime": "agent-office",
   },
   icons: {
     icon: "/favicon.svg",
@@ -30,7 +30,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="ko">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

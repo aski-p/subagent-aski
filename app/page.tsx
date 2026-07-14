@@ -1,9 +1,20 @@
 "use client";
 
 import { FormEvent, PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  advanceWorkflow,
+  createOfficeState,
+  pauseRun,
+  restoreOfficeState,
+  resumeRun,
+  serializeOfficeState,
+  startRun,
+  stopRun,
+} from "@/lib/office-domain";
+import { PixelAgent, type PixelAgentStatus } from "./components/pixel-agent";
 import { categoryMeta, characterPresets, getCharacterPreset, officeSkins, type CharacterCategory } from "./character-data";
 
-type RunState = "running" | "paused" | "stopped";
+type RunState = "running" | "paused" | "stopped" | "completed";
 type AgentState = "working" | "review" | "waiting" | "idle";
 type Priority = "보통" | "높음" | "긴급";
 
@@ -54,6 +65,7 @@ type PersistedOffice = {
 };
 
 const STORAGE_KEY = "agent-office:v3";
+const RUNTIME_STORAGE_KEY = "agent-office:runtime:v1";
 
 const ROLE_OPTIONS = [
   ["판단 PM", "pm"],
@@ -66,28 +78,6 @@ const ROLE_OPTIONS = [
 
 const ACCESSORY_OPTIONS = ["없음", "망토", "왕관", "마법모자", "고글", "안경", "목도리", "헤드셋", "배낭", "리본", "수정관", "작은 날개", "뿔", "마법책", "오라", "안테나", "홀로링", "툴암", "제트팩"];
 const AVATAR_SWATCHES = ["#4fac91", "#64a2df", "#d979a2", "#e4ae4e", "#9b7bd7", "#e47f63", "#78b96e", "#ef765f"];
-const ACCESSORY_CLASSES: Record<string, string> = {
-  "없음": "accessory-none",
-  "망토": "accessory-cape",
-  "왕관": "accessory-crown",
-  "마법모자": "accessory-wizard-hat",
-  "고글": "accessory-goggles",
-  "안경": "accessory-glasses",
-  "목도리": "accessory-scarf",
-  "헤드셋": "accessory-headset",
-  "배낭": "accessory-backpack",
-  "리본": "accessory-ribbon",
-  "수정관": "accessory-crystal-crown",
-  "작은 날개": "accessory-small-wings",
-  "뿔": "accessory-horns",
-  "마법책": "accessory-magic-book",
-  "오라": "accessory-aura",
-  "안테나": "accessory-antenna",
-  "홀로링": "accessory-holo-ring",
-  "툴암": "accessory-tool-arm",
-  "제트팩": "accessory-jetpack",
-};
-
 function avatarFrom(presetId: string): AvatarConfig {
   const preset = getCharacterPreset(presetId);
   return {
@@ -243,15 +233,6 @@ const initialEvents: EventItem[] = [
   { id: 3, time: "5분", title: "루크가 이벤트 연결 완료", detail: "agent.progress 수신", tone: "blue" },
 ];
 
-const workflow = [
-  { id: "brief", label: "브리프", owner: "PM", state: "done" },
-  { id: "plan", label: "기획", owner: "모아", state: "done" },
-  { id: "design", label: "디자인", owner: "세나", state: "active" },
-  { id: "build", label: "개발", owner: "루크", state: "active" },
-  { id: "qa", label: "QA", owner: "유니", state: "queued" },
-  { id: "judge", label: "판단", owner: "하람", state: "queued" },
-];
-
 function now() {
   return new Intl.DateTimeFormat("ko-KR", {
     hour: "2-digit",
@@ -296,51 +277,38 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   );
 }
 
-function CharacterFigure({ avatar, roleMark = "✦", roleKey = "guest" }: { avatar: AvatarConfig; roleMark?: string; roleKey?: string }) {
+function CharacterFigure({ avatar, roleMark = "✦", roleKey = "guest", status = "idle" }: { avatar: AvatarConfig; roleMark?: string; roleKey?: string; status?: PixelAgentStatus }) {
   const preset = getCharacterPreset(avatar.presetId);
-  const accessoryClass = ACCESSORY_CLASSES[avatar.accessory] ?? "accessory-none";
   return (
     <span
-      className={`agent-figure role-${roleKey} category-${preset.category} variant-${preset.variant} shape-${preset.variant % 5} expression-${avatar.expression} ${accessoryClass}`}
-      style={{
-        "--agent": avatar.primary,
-        "--agent-accent": avatar.accent,
-        "--agent-skin": avatar.skin,
-        "--avatar-scale": avatar.scale,
-      } as React.CSSProperties}
+      className={`agent-figure pixel-sprite-frame role-${roleKey} category-${preset.category} expression-${avatar.expression}`}
+      style={{ "--avatar-scale": avatar.scale } as React.CSSProperties}
       aria-hidden="true"
     >
-      <span className="agent-shadow" />
-      <span className="avatar-wing wing-left" />
-      <span className="avatar-wing wing-right" />
-      <span className="avatar-tail" />
-      <span className="avatar-ear ear-left" />
-      <span className="avatar-ear ear-right" />
-      <span className="avatar-antenna"><i /></span>
-      <span className="agent-hair-back" />
-      <span className="agent-neck" />
-      <span className="agent-body"><span className="role-mark">{roleMark}</span></span>
-      <span className="agent-arm arm-left" />
-      <span className="agent-arm arm-right" />
-      <span className="agent-leg leg-left" />
-      <span className="agent-leg leg-right" />
-      <span className="agent-head"><span className="face-panel" /><span className="eye eye-left" /><span className="eye eye-right" /><span className="agent-smile" /><span className="animal-muzzle" /></span>
-      <span className="agent-hair" />
-      <span className="avatar-hat" />
-      <span className="agent-tool" />
-      <span className="preset-symbol">{preset.category === "animal" ? "" : preset.symbol}</span>
+      <PixelAgent
+        primary={avatar.primary}
+        accent={avatar.accent}
+        skin={avatar.skin}
+        category={preset.category}
+        variant={preset.variant}
+        accessory={avatar.accessory}
+        expression={avatar.expression}
+        roleMark={roleMark}
+        status={status}
+      />
     </span>
   );
 }
 
 function AgentFigure({ agent }: { agent: Agent }) {
-  return <CharacterFigure avatar={agent.avatar} roleKey={agent.roleKey} roleMark={agent.role === "판단 PM" ? "◆" : agent.role.charAt(0)} />;
+  return <CharacterFigure avatar={agent.avatar} roleKey={agent.roleKey} roleMark={agent.role === "판단 PM" ? "PM" : agent.role.charAt(0)} status={agent.state} />;
 }
 
 export default function Home() {
   const [agents, setAgents] = useState(initialAgents);
   const [selectedId, setSelectedId] = useState("haram");
-  const [runState, setRunState] = useState<RunState>("running");
+  const [officeState, setOfficeState] = useState(createOfficeState);
+  const [runtimeReady, setRuntimeReady] = useState(false);
   const [events, setEvents] = useState(initialEvents);
   const [brief, setBrief] = useState("서브에이전트 오피스 MVP를 완성해줘");
   const [instruction, setInstruction] = useState("");
@@ -376,6 +344,19 @@ export default function Home() {
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
   const selectedPreset = selected ? getCharacterPreset(selected.avatar.presetId) : null;
   const currentSkin = officeSkins.find((skin) => skin.id === officeSkinId) ?? officeSkins[0];
+  const runState: RunState = officeState.run.status === "draft" ? "stopped" : officeState.run.status;
+  const workflowOwners: Record<string, string> = {
+    "Judgment PM": "하람",
+    Planner: "모아",
+    Designer: "세나",
+    Developer: "루크",
+    QA: "유니",
+  };
+  const workflow = officeState.workflow.map((step) => ({
+    ...step,
+    owner: workflowOwners[step.owner] ?? step.owner,
+    state: step.status === "pending" ? "queued" : step.status,
+  }));
   const studioTarget = studioTargetId === "__hire__" ? null : agents.find((agent) => agent.id === studioTargetId) ?? null;
   const studioPreset = getCharacterPreset(studioDraft.presetId);
   const workingCount = agents.filter((agent) => agent.state === "working" || agent.state === "review").length;
@@ -519,7 +500,8 @@ export default function Home() {
           const saved = JSON.parse(raw) as Partial<PersistedOffice>;
           if (Array.isArray(saved.agents) && saved.agents.length && saved.agents.every((agent) => agent?.id && agent?.avatar?.presetId)) {
             setAgents(saved.agents);
-            const restoredSelection = saved.agents.some((agent) => agent.id === saved.selectedId) ? saved.selectedId : saved.agents[0].id;
+            const savedSelection = typeof saved.selectedId === "string" ? saved.selectedId : "";
+            const restoredSelection = saved.agents.some((agent) => agent.id === savedSelection) ? savedSelection : (saved.agents[0]?.id ?? "");
             setSelectedId(restoredSelection);
           }
           if (typeof saved.officeSkinId === "string" && officeSkins.some((skin) => skin.id === saved.officeSkinId)) setOfficeSkinId(saved.officeSkinId);
@@ -546,6 +528,26 @@ export default function Home() {
     }, 180);
     return () => window.clearTimeout(timer);
   }, [agents, nextAgentNumber, officeSkinId, selectedId, storageReady]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setOfficeState(restoreOfficeState(window.localStorage.getItem(RUNTIME_STORAGE_KEY)));
+      setRuntimeReady(true);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!runtimeReady) return;
+    const timer = window.setTimeout(() => {
+      try {
+        window.localStorage.setItem(RUNTIME_STORAGE_KEY, serializeOfficeState(officeState));
+      } catch {
+        // Keep the running session in memory when browser storage is unavailable.
+      }
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [officeState, runtimeReady]);
 
   useEffect(() => {
     const closeTopLayer = (event: KeyboardEvent) => {
@@ -583,6 +585,7 @@ export default function Home() {
   useEffect(() => {
     if (runState !== "running") return;
     const progressTimer = window.setInterval(() => {
+      setOfficeState((current) => advanceWorkflow(current, 4));
       setAgents((current) => current.map((agent) => {
         if (agent.state !== "working" || agent.progress >= 96) return agent;
         return { ...agent, progress: Math.min(96, agent.progress + 1) };
@@ -609,25 +612,46 @@ export default function Home() {
   }, [runState]);
 
   const setProjectState = (next: RunState) => {
-    setRunState(next);
+    setOfficeState((current) => {
+      if (next === "running") {
+        if (current.run.status === "paused") return resumeRun(current);
+        if (current.run.status === "running") return current;
+        return startRun(current, {
+          objective: brief,
+          idempotencyKey: `manual-${current.events.length}-${brief.trim()}`,
+        });
+      }
+      if (next === "paused") return pauseRun(current);
+      if (next === "stopped") return stopRun(current);
+      return current;
+    });
+
     if (next === "running") {
-      setAgents((current) => current.map((agent) => agent.state === "idle" ? { ...agent, state: "working", speech: "다시 작업을 시작할게요." } : agent));
+      setAgents((current) => current.map((agent) => agent.state === "idle" ? { ...agent, state: "working", speech: "마지막 체크포인트부터 다시 시작할게요." } : agent));
       addEvent("프로젝트 실행 재개", `${agents.length}명의 에이전트가 동기화됐어요.`, "mint");
-      showToast("팀이 다시 움직이기 시작했어요.");
+      showToast("팀이 마지막 체크포인트부터 움직이기 시작했어요.");
     } else if (next === "paused") {
-      addEvent("프로젝트 일시정지", "현재 컨텍스트를 보존했어요.", "amber");
+      addEvent("프로젝트 일시정지", "현재 체크포인트와 진행률을 보존했어요.", "amber");
       showToast("모든 작업을 안전하게 일시정지했어요.");
-    } else {
-      setAgents((current) => current.map((agent) => ({ ...agent, state: "idle", speech: "프로젝트가 중지됐어요.", progress: 0 })));
-      addEvent("프로젝트 중지", "실행 큐를 비우고 결과물을 저장했어요.", "rose");
-      showToast("프로젝트를 중지했어요.");
+    } else if (next === "stopped") {
+      setAgents((current) => current.map((agent) => ({ ...agent, state: "idle", speech: "완료 결과를 보존하고 작업을 중지했어요." })));
+      addEvent("프로젝트 중지", "완료 결과와 활동 로그를 보존했어요.", "rose");
+      showToast("프로젝트를 중지하고 결과를 보존했어요.");
     }
   };
 
   const launchBrief = (event: FormEvent) => {
     event.preventDefault();
-    if (!brief.trim()) return;
-    setRunState("running");
+    const objective = brief.trim();
+    if (!objective) return;
+    if (officeState.run.status === "running" || officeState.run.status === "paused") {
+      showToast("현재 미션을 중지한 뒤 새 미션을 시작해 주세요.");
+      return;
+    }
+    setOfficeState((current) => startRun(current, {
+      objective,
+      idempotencyKey: `mission-${current.events.length}-${objective}`,
+    }));
     setAgents((current) => current.map((agent, index) => ({
       ...agent,
       state: index === 0 ? "review" : "working",
@@ -729,11 +753,11 @@ export default function Home() {
         </div>
 
         <div className="run-cluster" aria-label="프로젝트 실행 제어">
-          <div className={`run-state ${runState}`}><i />{runState === "running" ? "실행 중" : runState === "paused" ? "일시정지" : "중지됨"}</div>
+          <div className={`run-state ${runState}`}><i />{runState === "running" ? "실행 중" : runState === "paused" ? "일시정지" : runState === "completed" ? "완료됨" : "중지됨"}</div>
           <div className="segmented-controls">
-            <button className={runState === "running" ? "active" : ""} onClick={() => setProjectState("running")} title="실행"><Icon name="play" size={16} /></button>
-            <button className={runState === "paused" ? "active" : ""} onClick={() => setProjectState("paused")} title="일시정지"><Icon name="pause" size={16} /></button>
-            <button className={runState === "stopped" ? "active danger" : ""} onClick={() => setStopConfirmOpen(true)} title="중지"><Icon name="stop" size={15} /></button>
+            <button className={runState === "running" ? "active" : ""} onClick={() => setProjectState("running")} title={runState === "paused" ? "재개" : "실행"} disabled={runState === "running" || runState === "completed"}><Icon name="play" size={16} /></button>
+            <button className={runState === "paused" ? "active" : ""} onClick={() => setProjectState("paused")} title="일시정지" disabled={runState !== "running"}><Icon name="pause" size={16} /></button>
+            <button className={runState === "stopped" ? "active danger" : ""} onClick={() => setStopConfirmOpen(true)} title="중지" disabled={runState !== "running" && runState !== "paused"}><Icon name="stop" size={15} /></button>
           </div>
         </div>
 
@@ -789,7 +813,7 @@ export default function Home() {
               <span>오늘 팀이 완성할 목표</span>
               <input value={brief} onChange={(event) => setBrief(event.target.value)} aria-label="프로젝트 목표" />
             </label>
-            <button type="submit"><Icon name="play" size={16} />미션 실행</button>
+            <button type="submit" disabled={!brief.trim() || runState === "running" || runState === "paused"}><Icon name="play" size={16} />{runState === "running" || runState === "paused" ? "미션 진행 중" : "미션 실행"}</button>
           </form>
 
           <section className={`office-card ${runState}`} aria-label="가상 에이전트 사무실">
@@ -828,8 +852,9 @@ export default function Home() {
               <div className="scene-prop desk desk-b"><span>✦</span></div>
               <div className="scene-prop desk desk-c"><span>✓</span></div>
 
-              {runState === "paused" && <div className="paused-overlay"><span><Icon name="pause" /></span><strong>팀이 잠시 쉬고 있어요</strong><small>컨텍스트와 진행률은 안전하게 보존됩니다</small></div>}
-              {runState === "stopped" && <div className="paused-overlay stopped"><span><Icon name="stop" /></span><strong>프로젝트가 중지됐어요</strong><small>실행을 누르면 새로운 작업을 시작합니다</small></div>}
+              {runState === "paused" && <div className="paused-overlay"><span><Icon name="pause" /></span><strong>팀이 잠시 쉬고 있어요</strong><small>체크포인트와 진행률을 안전하게 보존했습니다</small></div>}
+              {runState === "stopped" && <div className="paused-overlay stopped"><span><Icon name="stop" /></span><strong>프로젝트가 중지됐어요</strong><small>완료 결과와 활동 로그는 그대로 보존됩니다</small></div>}
+              {runState === "completed" && <div className="paused-overlay completed"><span><Icon name="check" /></span><strong>미션을 완료했어요</strong><small>모든 워크플로 체크포인트가 저장됐습니다</small></div>}
 
               {agents.map((agent) => (
                 <button

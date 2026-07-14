@@ -587,6 +587,31 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .character-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* Original pixel-sprite renderer: integer geometry, no blur or gradients. */
+.pixel-sprite-frame {
+  filter: none;
+  animation: pixel-idle 1.1s steps(2, end) infinite;
+}
+.pixel-sprite-frame .pixel-agent {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+  image-rendering: pixelated;
+  transform: scale(var(--avatar-scale, 1));
+  transform-origin: 50% 100%;
+  filter: drop-shadow(2px 3px 0 rgba(20, 42, 45, .32));
+}
+.scene-agent.working .pixel-agent { animation: pixel-work .7s steps(2, end) infinite; }
+.scene-agent.waiting .pixel-agent, .scene-agent.review .pixel-agent { animation: pixel-wait 1.2s steps(2, end) infinite; }
+.scene-agent.dragging .pixel-sprite-frame { animation: none; transform: translateY(-13px) scale(1.12); }
+.card-character .pixel-sprite-frame,
+.preview-avatar .pixel-sprite-frame,
+.customizer-preview > .pixel-sprite-frame { animation: none; }
+@keyframes pixel-idle { 0%, 49% { translate: 0 0; } 50%, 100% { translate: 0 -2px; } }
+@keyframes pixel-work { 0%, 49% { transform: translateX(-1px); } 50%, 100% { transform: translateX(1px); } }
+@keyframes pixel-wait { 0%, 49% { translate: 0 0; } 50%, 100% { translate: 0 -1px; } }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
   .scene-agent { transition: none; }
