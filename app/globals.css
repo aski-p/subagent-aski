@@ -587,6 +587,58 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .character-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* Functional notification and agent-settings dialogs. */
+.utility-modal { width: min(520px, calc(100vw - 24px)); max-height: min(680px, calc(100svh - 24px)); display: flex; flex-direction: column; overflow: hidden; border: 3px solid #315b54; border-radius: 6px; background: #fffdf5; box-shadow: 7px 7px 0 rgba(31,54,49,.3); }
+.utility-modal > header { padding: 20px 22px 15px; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 2px solid #d9e3dc; }.utility-modal h2 { margin-top: 3px; font-size: 20px; }.utility-modal header p { margin-top: 5px; color: #788983; font-size: 9px; }
+.utility-list { min-height: 160px; padding: 12px 18px; overflow-y: auto; }.utility-event { min-height: 58px; padding: 10px 8px; display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 10px; border-bottom: 1px solid #e0e7e2; }.utility-event > i { width: 8px; height: 8px; background: #4f9e86; }.utility-event > i.amber { background: #d8a542; }.utility-event > i.blue { background: #5f8fd4; }.utility-event > i.rose { background: #d86f7e; }.utility-event div { min-width: 0; display: flex; flex-direction: column; }.utility-event strong { font-size: 10px; }.utility-event span { margin-top: 3px; overflow: hidden; color: #7d8d87; font-size: 8px; white-space: nowrap; text-overflow: ellipsis; }.utility-event time { color: #91a09b; font-size: 7px; }.utility-empty { min-height: 150px; display: grid; place-items: center; color: #879791; font-size: 10px; }
+.utility-modal > footer { padding: 12px 18px 16px; display: flex; justify-content: flex-end; gap: 8px; border-top: 2px solid #e0e7e2; }.utility-modal footer button { min-height: 38px; padding: 0 15px; border: 2px solid #cbd8d1; border-radius: 4px; color: #5f746d; background: #fff; font-size: 9px; font-weight: 800; cursor: pointer; }.utility-modal footer button.primary { border-color: #2e776a; color: #fff; background: #2e776a; }.utility-modal footer button:disabled { opacity: .4; cursor: not-allowed; }
+.settings-grid { padding: 18px 22px; display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }.settings-grid label { display: flex; flex-direction: column; gap: 6px; color: #4d635c; font-size: 9px; font-weight: 800; }.settings-grid select { min-height: 42px; padding: 0 10px; border: 2px solid #cbd8d1; border-radius: 4px; color: #314c46; background: #fff; }.settings-note { grid-column: 1 / -1; padding: 11px; display: flex; align-items: center; gap: 8px; border: 2px solid #b9d5c8; color: #4a7166; background: #edf7f1; font-size: 8px; }
+@media (max-width: 520px) { .settings-grid { grid-template-columns: 1fr; }.utility-modal { max-height: calc(100svh - 12px); } }
+
+/* Tile-based management office. Original geometry; no game assets are copied. */
+.office-scene {
+  isolation: isolate;
+  border: 4px solid #4b3c2f;
+  border-radius: 2px;
+  background-color: color-mix(in srgb, var(--office-tone, #55a18b) 18%, #dfc99a) !important;
+  background-image:
+    linear-gradient(90deg, rgba(255,255,255,.12) 50%, transparent 50%),
+    linear-gradient(rgba(255,255,255,.1) 50%, transparent 50%),
+    repeating-linear-gradient(0deg, transparent 0 30px, rgba(75,60,47,.22) 30px 32px),
+    repeating-linear-gradient(90deg, transparent 0 30px, rgba(75,60,47,.22) 30px 32px) !important;
+  background-size: 64px 64px, 64px 64px, 32px 32px, 32px 32px !important;
+  image-rendering: pixelated;
+  box-shadow: inset 0 0 0 4px rgba(255,248,211,.42), 5px 5px 0 #2f4b45;
+}
+.office-scene::before {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0 0 auto;
+  height: 54px;
+  border-bottom: 5px solid #4b3c2f;
+  background:
+    linear-gradient(90deg, transparent 4%, #9ed7d2 4% 15%, transparent 15% 21%, #9ed7d2 21% 32%, transparent 32% 68%, #9ed7d2 68% 79%, transparent 79% 85%, #9ed7d2 85% 96%, transparent 96%),
+    color-mix(in srgb, var(--office-tone, #55a18b) 55%, #76553d);
+  box-shadow: inset 0 -7px 0 rgba(37,52,48,.2);
+}
+.office-scene::after { content: ""; position: absolute; z-index: 0; inset: 54px 50% 0 auto; width: 4px; background: rgba(83,66,49,.24); pointer-events: none; }
+.scene-prop { display: block; position: absolute; z-index: 1; border: 3px solid #4b3c2f; border-radius: 0; background: #9d704b; box-shadow: 4px 4px 0 rgba(49,54,43,.25); }
+.scene-prop.meeting-table { width: 132px; height: 66px; left: calc(50% - 66px); top: 42%; background: #c18b54; }
+.scene-prop.meeting-table::before { content: "MEET"; position: absolute; inset: 8px; display: grid; place-items: center; border: 2px dashed #6f5039; color: #6f5039; font: 800 9px var(--font-geist-mono); letter-spacing: 2px; }
+.scene-prop.rug { width: 176px; height: 104px; left: calc(50% - 88px); top: 34%; z-index: 0; border-color: #376a64; background: repeating-linear-gradient(45deg, #5d9e91 0 12px, #71b2a2 12px 24px); box-shadow: 4px 4px 0 rgba(49,54,43,.18); }
+.scene-prop.plant { width: 26px; height: 30px; bottom: 9%; background: #b66d47; }
+.scene-prop.plant::before { content: ""; position: absolute; width: 22px; height: 22px; left: -1px; top: -19px; background: #4e9158; clip-path: polygon(50% 0, 70% 35%, 100% 30%, 78% 58%, 92% 90%, 56% 76%, 30% 100%, 28% 64%, 0 48%, 34% 35%); }
+.scene-prop.plant-a { left: 4%; }.scene-prop.plant-b { right: 4%; }
+.scene-prop.board { width: 118px; height: 50px; left: 8%; top: 14%; padding: 8px; color: #fff4cf; background: #355d58; font: 800 8px var(--font-geist-mono); }
+.scene-prop.board i { display: block; width: 58%; height: 3px; margin-top: 5px; background: #e7c763; }.scene-prop.board i:nth-of-type(2) { width: 82%; background: #e88968; }
+.scene-prop.sofa { width: 92px; height: 38px; right: 7%; top: 15%; background: #6e78a5; }
+.scene-prop.desk { width: 94px; height: 36px; display: grid; place-items: center; color: #fff4cf; font: 800 16px var(--font-geist-mono); }
+.scene-prop.desk-a { left: 8%; bottom: 13%; }.scene-prop.desk-b { right: 8%; bottom: 13%; }.scene-prop.desk-c { right: 8%; top: 34%; }
+.room-label { z-index: 3; border: 2px solid #4b3c2f; border-radius: 0; box-shadow: 2px 2px 0 rgba(49,54,43,.28); font-family: var(--font-geist-mono); }
+.mission-composer, .office-card, .workflow-card, .team-summary, .sidebar-insight, .current-task-card, .instruction-card { border-radius: 6px; box-shadow: 3px 3px 0 rgba(46,75,69,.14); }
+.office-tool-button, .hire-button, .mission-composer > button, .segmented-controls, .segmented-controls button { border-radius: 4px; }
+
 /* Original pixel-sprite renderer: integer geometry, no blur or gradients. */
 .pixel-sprite-frame {
   filter: none;

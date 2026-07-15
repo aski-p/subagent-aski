@@ -47,6 +47,7 @@ type Agent = {
   logs: { time: string; text: string }[];
   avatar: AvatarConfig;
   placedUntil?: number;
+  fireAfterTask?: boolean;
 };
 
 type EventItem = {
@@ -62,6 +63,8 @@ type PersistedOffice = {
   officeSkinId: string;
   selectedId: string;
   nextAgentNumber: number;
+  events: EventItem[];
+  brief: string;
 };
 
 const STORAGE_KEY = "agent-office:v3";
@@ -166,8 +169,8 @@ const initialAgents: Agent[] = [
     roleKey: "developer",
     model: "Qwen 3.6",
     state: "working",
-    task: "실시간 이벤트 스트림 연결",
-    speech: "상태 동기화 훅을 붙이는 중!",
+    task: "로컬 상태 머신 UI 연결",
+    speech: "체크포인트와 화면 상태를 맞추는 중!",
     progress: 46,
     color: "#6c9fe4",
     accent: "#314f91",
@@ -175,10 +178,10 @@ const initialAgents: Agent[] = [
     x: 63,
     y: 63,
     completed: 31,
-    queue: ["재연결 처리", "명령 큐 낙관적 업데이트"],
+    queue: ["새로고침 복원 검증", "명령 중복 방지"],
     logs: [
-      { time: "16:42", text: "SSE 이벤트 8종의 타입을 정의했어요." },
-      { time: "16:33", text: "에이전트 상태 스토어를 연결했어요." },
+      { time: "16:42", text: "6단계 워크플로 상태를 화면에 연결했어요." },
+      { time: "16:33", text: "브라우저 상태 복원 경계를 정리했어요." },
     ],
   },
   {
@@ -228,9 +231,9 @@ const initialAgents: Agent[] = [
 ];
 
 const initialEvents: EventItem[] = [
-  { id: 1, time: "방금", title: "세나가 시안을 업데이트", detail: "직원 상세 패널 v3", tone: "rose" },
-  { id: 2, time: "2분", title: "하람의 판단이 필요함", detail: "모바일 범위 승인", tone: "amber" },
-  { id: 3, time: "5분", title: "루크가 이벤트 연결 완료", detail: "agent.progress 수신", tone: "blue" },
+  { id: 1, time: "방금", title: "픽셀 오피스 준비 완료", detail: "오리지널 타일과 캐릭터 적용", tone: "rose" },
+  { id: 2, time: "2분", title: "체크포인트 상태 준비", detail: "실행·중지·재개 로컬 상태", tone: "amber" },
+  { id: 3, time: "5분", title: "브라우저 복원 준비", detail: "직원·이벤트·워크플로 저장", tone: "blue" },
 ];
 
 function now() {
@@ -331,6 +334,8 @@ export default function Home() {
   const [storageReady, setStorageReady] = useState(false);
   const [mobileTeamOpen, setMobileTeamOpen] = useState(false);
   const [confirmFire, setConfirmFire] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [hireForm, setHireForm] = useState({ name: "", role: "UI/UX 디자이너", model: "GPT SOL" });
   const officeSceneRef = useRef<HTMLDivElement>(null);
@@ -506,6 +511,8 @@ export default function Home() {
           }
           if (typeof saved.officeSkinId === "string" && officeSkins.some((skin) => skin.id === saved.officeSkinId)) setOfficeSkinId(saved.officeSkinId);
           if (typeof saved.nextAgentNumber === "number") setNextAgentNumber(saved.nextAgentNumber);
+          if (Array.isArray(saved.events)) setEvents(saved.events.slice(0, 50));
+          if (typeof saved.brief === "string") setBrief(saved.brief);
         }
       } catch {
         window.localStorage.removeItem(STORAGE_KEY);
@@ -519,7 +526,7 @@ export default function Home() {
   useEffect(() => {
     if (!storageReady) return;
     const timer = window.setTimeout(() => {
-      const snapshot: PersistedOffice = { agents, officeSkinId, selectedId, nextAgentNumber };
+      const snapshot: PersistedOffice = { agents, officeSkinId, selectedId, nextAgentNumber, events, brief };
       try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
       } catch {
@@ -527,7 +534,7 @@ export default function Home() {
       }
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [agents, nextAgentNumber, officeSkinId, selectedId, storageReady]);
+  }, [agents, brief, events, nextAgentNumber, officeSkinId, selectedId, storageReady]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -553,16 +560,18 @@ export default function Home() {
     const closeTopLayer = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (characterStudioOpen) setCharacterStudioOpen(false);
+      else if (settingsOpen) setSettingsOpen(false);
+      else if (notificationOpen) setNotificationOpen(false);
       else if (skinOpen) setSkinOpen(false);
       else if (stopConfirmOpen) setStopConfirmOpen(false);
       else if (hireOpen) setHireOpen(false);
     };
     window.addEventListener("keydown", closeTopLayer);
     return () => window.removeEventListener("keydown", closeTopLayer);
-  }, [characterStudioOpen, hireOpen, skinOpen, stopConfirmOpen]);
+  }, [characterStudioOpen, hireOpen, notificationOpen, settingsOpen, skinOpen, stopConfirmOpen]);
 
   useEffect(() => {
-    if (!characterStudioOpen && !hireOpen && !skinOpen && !stopConfirmOpen) return;
+    if (!characterStudioOpen && !hireOpen && !notificationOpen && !settingsOpen && !skinOpen && !stopConfirmOpen) return;
     const previous = document.activeElement as HTMLElement | null;
     const modal = document.querySelector<HTMLElement>('[role="dialog"][aria-modal="true"]');
     if (!modal) return;
@@ -580,15 +589,16 @@ export default function Home() {
       modal.removeEventListener("keydown", trapFocus);
       previous?.focus();
     };
-  }, [characterStudioOpen, hireOpen, skinOpen, stopConfirmOpen]);
+  }, [characterStudioOpen, hireOpen, notificationOpen, settingsOpen, skinOpen, stopConfirmOpen]);
 
   useEffect(() => {
     if (runState !== "running") return;
     const progressTimer = window.setInterval(() => {
       setOfficeState((current) => advanceWorkflow(current, 4));
-      setAgents((current) => current.map((agent) => {
-        if (agent.state !== "working" || agent.progress >= 96) return agent;
-        return { ...agent, progress: Math.min(96, agent.progress + 1) };
+      setAgents((current) => current.flatMap((agent) => {
+        if (agent.fireAfterTask && agent.progress >= 95) return [];
+        if (agent.state !== "working" || agent.progress >= 96) return [agent];
+        return [{ ...agent, progress: Math.min(96, agent.progress + 1) }];
       }));
     }, 2600);
     return () => window.clearInterval(progressTimer);
@@ -728,13 +738,40 @@ export default function Home() {
     showToast("새 직원의 자리가 준비됐어요.");
   };
 
-  const fireSelected = () => {
+  const fireSelected = (strategy: "drain" | "transfer" | "cancel" = "cancel") => {
     if (!selected) return;
     const name = selected.name;
+    const fallback = agents.find((agent) => agent.id !== selected.id) ?? null;
+
+    if ((selected.state === "working" || selected.state === "review") && strategy === "drain") {
+      setAgents((current) => current.map((agent) => agent.id === selected.id ? {
+        ...agent,
+        state: "working",
+        fireAfterTask: true,
+        speech: "현재 체크포인트를 마치면 계약을 종료할게요.",
+        logs: [{ time: now(), text: "현재 업무 완료 후 계약 종료가 예약됐어요." }, ...agent.logs],
+      } : agent));
+      setConfirmFire(false);
+      addEvent(`${name} 완료 후 계약 종료`, "현재 체크포인트를 마친 뒤 자동 종료", "amber");
+      showToast(`${name}님의 완료 후 종료를 예약했어요.`);
+      return;
+    }
+
+    if ((selected.state === "working" || selected.state === "review") && strategy === "transfer" && fallback) {
+      setAgents((current) => current
+        .filter((agent) => agent.id !== selected.id)
+        .map((agent) => agent.id === fallback.id ? { ...agent, queue: [...agent.queue, `[${name}에게서 이관] ${selected.task}`] } : agent));
+      selectAgent(fallback.id);
+      setConfirmFire(false);
+      addEvent(`${name} 업무 이관 후 계약 종료`, `${fallback.name}에게 “${selected.task}” 이관`, "blue");
+      showToast(`${fallback.name}님에게 업무를 이관했어요.`);
+      return;
+    }
+
     setAgents((current) => current.filter((agent) => agent.id !== selected.id));
-    selectAgent(agents.find((agent) => agent.id !== selected.id)?.id ?? "");
+    selectAgent(fallback?.id ?? "");
     setConfirmFire(false);
-    addEvent(`${name}님과 계약 종료`, "진행 중 컨텍스트를 보관함", "rose");
+    addEvent(`${name}님과 계약 종료`, strategy === "cancel" ? "현재 작업을 취소하고 기록을 보관함" : "대기 직원을 종료하고 기록을 보관함", "rose");
     showToast(`${name}님의 작업 기록을 보관했어요.`);
   };
 
@@ -762,7 +799,7 @@ export default function Home() {
         </div>
 
         <div className="top-actions">
-          <button className="icon-button notification" aria-label="알림"><Icon name="bell" /><i /></button>
+          <button className="icon-button notification" aria-label="알림" onClick={() => setNotificationOpen(true)}><Icon name="bell" />{events.length > 0 && <i />}</button>
           <div className="owner-avatar">GH</div>
         </div>
       </header>
@@ -833,7 +870,7 @@ export default function Home() {
             <div
               className={`office-scene skin-${officeSkinId} ${draggingId ? "is-dragging" : ""}`}
               ref={officeSceneRef}
-              style={{ backgroundImage: `linear-gradient(180deg, rgba(230,246,238,.02), rgba(35,32,46,.07)), url("${currentSkin.image}")` }}
+              style={{ "--office-tone": currentSkin.palette } as React.CSSProperties}
             >
               <div className="placement-guide"><Icon name="move" size={13} /><span>캐릭터를 길게 누른 뒤 원하는 자리로 옮기세요</span></div>
               {draggingId && <div className="drag-status"><span>✦</span>원하는 자리에 놓으세요</div>}
@@ -979,9 +1016,15 @@ export default function Home() {
 
               <div className="detail-footer">
                 {confirmFire ? (
-                  <div className="fire-confirm"><span>정말 계약을 종료할까요?</span><button onClick={() => setConfirmFire(false)}>취소</button><button className="danger" onClick={fireSelected}>해고</button></div>
+                  <div className="fire-confirm">
+                    {(selected.state === "working" || selected.state === "review") ? (
+                      <><span>진행 중 업무를 어떻게 처리할까요?</span><button onClick={() => fireSelected("drain")}>완료 후</button><button onClick={() => fireSelected("transfer")}>이관</button><button className="danger" onClick={() => fireSelected("cancel")}>취소 후 종료</button></>
+                    ) : (
+                      <><span>정말 계약을 종료할까요?</span><button onClick={() => setConfirmFire(false)}>취소</button><button className="danger" onClick={() => fireSelected("cancel")}>종료</button></>
+                    )}
+                  </div>
                 ) : (
-                  <><button className="quiet-button"><Icon name="briefcase" size={15} />설정</button><button className="fire-button" onClick={() => setConfirmFire(true)}><Icon name="trash" size={15} />계약 종료</button></>
+                  <><button className="quiet-button" onClick={() => setSettingsOpen(true)}><Icon name="briefcase" size={15} />설정</button><button className="fire-button" onClick={() => setConfirmFire(true)}><Icon name="trash" size={15} />계약 종료</button></>
                 )}
               </div>
             </>
@@ -1097,6 +1140,32 @@ export default function Home() {
               </aside>
             </div>
           </div>
+        </div>
+      )}
+
+      {notificationOpen && (
+        <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setNotificationOpen(false); }}>
+          <section className="utility-modal" role="dialog" aria-modal="true" aria-labelledby="notifications-title">
+            <header><div><span className="eyebrow">EVENT INBOX</span><h2 id="notifications-title">팀 알림</h2><p>실행, 지시, 고용과 체크포인트 기록을 확인하세요.</p></div><button className="modal-close static" onClick={() => setNotificationOpen(false)} aria-label="알림 닫기"><Icon name="close" /></button></header>
+            <div className="utility-list">
+              {events.length ? events.map((item) => <article className="utility-event" key={item.id}><i className={item.tone} /><div><strong>{item.title}</strong><span>{item.detail}</span></div><time>{item.time}</time></article>) : <div className="utility-empty">새 알림이 없어요.</div>}
+            </div>
+            <footer><button onClick={() => setEvents([])} disabled={!events.length}>모두 지우기</button><button className="primary" onClick={() => setNotificationOpen(false)}>확인</button></footer>
+          </section>
+        </div>
+      )}
+
+      {settingsOpen && selected && (
+        <div className="modal-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) setSettingsOpen(false); }}>
+          <section className="utility-modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+            <header><div><span className="eyebrow">AGENT SETTINGS</span><h2 id="settings-title">{selected.name} 설정</h2><p>선택한 직원의 실행 모델과 공개 상태를 관리합니다.</p></div><button className="modal-close static" onClick={() => setSettingsOpen(false)} aria-label="설정 닫기"><Icon name="close" /></button></header>
+            <div className="settings-grid">
+              <label><span>연결 모델</span><select value={selected.model} onChange={(event) => { const model = event.target.value; setAgents((current) => current.map((agent) => agent.id === selected.id ? { ...agent, model } : agent)); addEvent(`${selected.name} 모델 변경`, model, "blue"); }}><option>GPT SOL Pro</option><option>GPT SOL</option><option>Qwen 3.6</option><option>Claude CLI</option><option>직접 연결</option></select></label>
+              <label><span>현재 상태</span><select value={selected.state} onChange={(event) => { const state = event.target.value as AgentState; setAgents((current) => current.map((agent) => agent.id === selected.id ? { ...agent, state } : agent)); }}><option value="working">작업 중</option><option value="review">검토 필요</option><option value="waiting">대기 중</option><option value="idle">휴식 중</option></select></label>
+              <div className="settings-note"><Icon name="check" size={15} /><span>변경값은 이 브라우저에 자동 저장되며 새로고침 후에도 복원됩니다.</span></div>
+            </div>
+            <footer><button className="primary" onClick={() => { setSettingsOpen(false); showToast(`${selected.name} 설정을 저장했어요.`); }}>저장 완료</button></footer>
+          </section>
         </div>
       )}
 
