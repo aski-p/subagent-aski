@@ -11,7 +11,7 @@ import {
   startRun,
   stopRun,
 } from "@/lib/office-domain";
-import { PixelAgent, type PixelAgentStatus } from "./components/pixel-agent";
+import { ToonAgent, type ToonAgentStatus } from "./components/toon-agent";
 import { categoryMeta, characterPresets, getCharacterPreset, officeSkins, type CharacterCategory } from "./character-data";
 
 type RunState = "running" | "paused" | "stopped" | "completed";
@@ -231,7 +231,7 @@ const initialAgents: Agent[] = [
 ];
 
 const initialEvents: EventItem[] = [
-  { id: 1, time: "방금", title: "픽셀 오피스 준비 완료", detail: "오리지널 타일과 캐릭터 적용", tone: "rose" },
+  { id: 1, time: "방금", title: "카툰 오피스 준비 완료", detail: "셀 셰이딩 배경과 100종 캐릭터 적용", tone: "rose" },
   { id: 2, time: "2분", title: "체크포인트 상태 준비", detail: "실행·중지·재개 로컬 상태", tone: "amber" },
   { id: 3, time: "5분", title: "브라우저 복원 준비", detail: "직원·이벤트·워크플로 저장", tone: "blue" },
 ];
@@ -280,15 +280,15 @@ function Icon({ name, size = 18 }: { name: string; size?: number }) {
   );
 }
 
-function CharacterFigure({ avatar, roleMark = "✦", roleKey = "guest", status = "idle" }: { avatar: AvatarConfig; roleMark?: string; roleKey?: string; status?: PixelAgentStatus }) {
+function CharacterFigure({ avatar, roleMark = "✦", roleKey = "guest", status = "idle" }: { avatar: AvatarConfig; roleMark?: string; roleKey?: string; status?: ToonAgentStatus }) {
   const preset = getCharacterPreset(avatar.presetId);
   return (
     <span
-      className={`agent-figure pixel-sprite-frame role-${roleKey} category-${preset.category} expression-${avatar.expression}`}
+      className={`agent-figure toon-sprite-frame role-${roleKey} category-${preset.category} expression-${avatar.expression}`}
       style={{ "--avatar-scale": avatar.scale } as React.CSSProperties}
       aria-hidden="true"
     >
-      <PixelAgent
+      <ToonAgent
         primary={avatar.primary}
         accent={avatar.accent}
         skin={avatar.skin}
@@ -870,7 +870,7 @@ export default function Home() {
             <div
               className={`office-scene skin-${officeSkinId} ${draggingId ? "is-dragging" : ""}`}
               ref={officeSceneRef}
-              style={{ "--office-tone": currentSkin.palette } as React.CSSProperties}
+              style={{ "--office-tone": currentSkin.palette, "--office-image": `url("${currentSkin.image}")` } as React.CSSProperties}
             >
               <div className="placement-guide"><Icon name="move" size={13} /><span>캐릭터를 길게 누른 뒤 원하는 자리로 옮기세요</span></div>
               {draggingId && <div className="drag-status"><span>✦</span>원하는 자리에 놓으세요</div>}

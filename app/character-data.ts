@@ -49,14 +49,14 @@ const categorySource: Record<CharacterCategory, { label: string; names: string[]
     accessories: ["목도리", "안경", "헤드셋", "배낭", "리본"],
   },
   fantasy: {
-    label: "게임 판타지",
+    label: "카툰 판타지",
     names: ["민트 슬라임", "고대 나무정령", "구름 요정", "불꽃 정령", "물방울 정령", "산호 골렘", "버섯 친구", "꼬마 드래곤", "별의 수호자", "룬 기사", "수정 마법사", "숲 파수꾼", "바다 현자", "천공 정찰자", "그림자 도적", "빛의 사제", "시간술사", "폭풍 소환사", "용암 대장장이", "빙결 궁수", "꿈 수집가", "보물 사냥꾼", "포션 마스터", "태엽 연금술사", "차원 여행자"],
     symbols: ["●", "♣", "☁", "♨", "◉", "⬟", "♠", "◆", "★", "ᚱ", "◇", "♧", "≈", "☼", "◐", "✧", "⌛", "ϟ", "♨", "❄", "☾", "♛", "⚗", "⚙", "◎"],
     accessories: ["수정관", "작은 날개", "뿔", "마법책", "오라"],
   },
   robot: {
     label: "로봇",
-    names: ["픽셀 비서", "큐브 메이트", "라운드 봇", "아틀라스 미니", "네온 드로이드", "청소 로버", "메일 봇", "QA 프로브", "데이터 스카우트", "리듬 유닛", "가드 봇", "메디 봇", "플랜트 로버", "코드 드로이드", "드로잉 암", "스팀 오토마톤", "홀로 비서", "문 워커", "딥시 로버", "팩토리 미니", "윈드 터빈 봇", "프리즘 유닛", "폴라 봇", "링크 드로이드", "오메가 포켓"],
+    names: ["바람 비서", "큐브 메이트", "라운드 봇", "아틀라스 미니", "네온 드로이드", "청소 로버", "메일 봇", "QA 프로브", "데이터 스카우트", "리듬 유닛", "가드 봇", "메디 봇", "플랜트 로버", "코드 드로이드", "드로잉 암", "스팀 오토마톤", "홀로 비서", "문 워커", "딥시 로버", "팩토리 미니", "윈드 터빈 봇", "프리즘 유닛", "폴라 봇", "항로 드로이드", "오메가 포켓"],
     symbols: ["▦", "⬡", "◉", "A", "N", "↻", "✉", "✓", "⌁", "♫", "⌂", "+", "♣", "</>", "✎", "⚙", "H", "☾", "≈", "F", "↯", "◇", "❄", "∞", "Ω"],
     accessories: ["안테나", "헤드셋", "홀로링", "툴암", "제트팩"],
   },
@@ -66,7 +66,7 @@ export const categoryMeta: Array<{ id: "all" | CharacterCategory; label: string;
   { id: "all", label: "전체 100", icon: "✦" },
   { id: "human", label: "인간 25", icon: "♙" },
   { id: "animal", label: "동물 25", icon: "🐾" },
-  { id: "fantasy", label: "게임 판타지 25", icon: "◆" },
+  { id: "fantasy", label: "카툰 판타지 25", icon: "◆" },
   { id: "robot", label: "로봇 25", icon: "⚙" },
 ];
 
@@ -91,7 +91,7 @@ export const characterPresets: CharacterPreset[] = (Object.keys(categorySource) 
 
 export const officeSkins: OfficeSkin[] = [
   { id: "garden", name: "바람숲 스튜디오", subtitle: "햇살과 식물이 가득한 기본 오피스", image: "/office-bg.webp", palette: "#55a18b" },
-  { id: "guild", name: "룬 길드 본사", subtitle: "책상 12개가 있는 판타지 길드", image: "/office-skins/guild-office.webp", palette: "#c38a48" },
+  { id: "guild", name: "바람항로 길드", subtitle: "바다와 햇살이 보이는 셀 셰이딩 오피스", image: "/office-skins/wind-guild-office.webp", palette: "#c9863f" },
   { id: "cyber", name: "네온 코어 랩", subtitle: "홀로그램으로 일하는 미래 연구소", image: "/office-skins/cyber-office.webp", palette: "#756ee8" },
   { id: "sky", name: "구름 성채", subtitle: "하늘 위에 떠 있는 개방형 오피스", image: "/office-skins/sky-office.webp", palette: "#75b8db" },
   { id: "space", name: "오비탈 커맨드", subtitle: "행성을 바라보는 우주정거장 본사", image: "/office-skins/space-office.webp", palette: "#e5834e" },

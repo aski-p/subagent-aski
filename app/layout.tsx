@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Agent Office — AI 팀 운영 시뮬레이터",
-  description: "AI 서브에이전트의 업무, 진행률, 지시와 승인 흐름을 픽셀 오피스에서 운영하세요.",
+  description: "AI 서브에이전트의 업무, 진행률, 지시와 승인 흐름을 셀 셰이딩 카툰 오피스에서 운영하세요.",
   other: {
     "app-runtime": "agent-office",
   },
