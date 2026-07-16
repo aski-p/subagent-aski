@@ -826,7 +826,7 @@ export default function Home() {
                 onClick={() => { selectAgent(agent.id); setDetailOpen(true); setConfirmFire(false); setMobileTeamOpen(false); }}
               >
                 <span className={`mini-avatar mini-${getCharacterPreset(agent.avatar.presetId).category}`} style={{ "--mini": agent.avatar.primary, "--mini-accent": agent.avatar.accent } as React.CSSProperties}>
-                  <span>{getCharacterPreset(agent.avatar.presetId).symbol}</span><i className={agent.state} />
+                  <CharacterFigure avatar={agent.avatar} roleKey={agent.roleKey} roleMark={getCharacterPreset(agent.avatar.presetId).symbol} status={agent.state} /><i className={agent.state} />
                 </span>
                 <span className="agent-list-copy"><strong>{agent.name}</strong><small>{agent.role}</small></span>
                 <span className="agent-progress-mini">{agent.state === "idle" ? "—" : `${agent.progress}%`}</span>
@@ -945,7 +945,7 @@ export default function Home() {
               <div className="detail-head">
                 <button className="detail-close" onClick={() => setDetailOpen(false)} aria-label="상세 패널 닫기"><Icon name="close" size={18} /></button>
                 <button className={`hero-avatar hero-${selectedPreset?.category}`} style={{ "--mini": selected.avatar.primary, "--mini-accent": selected.avatar.accent } as React.CSSProperties} onClick={() => openCharacterStudio(selected.id)} aria-label={`${selected.name} 캐릭터 꾸미기`}>
-                  <span>{selectedPreset?.symbol}</span><i className={selected.state} /><b><Icon name="palette" size={11} /></b>
+                  <CharacterFigure avatar={selected.avatar} roleKey={selected.roleKey} roleMark={selectedPreset?.symbol} status={selected.state} /><i className={selected.state} /><b><Icon name="palette" size={11} /></b>
                 </button>
                 <div className="detail-identity">
                   <h2>{selected.name}</h2>

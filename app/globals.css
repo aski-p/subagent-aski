@@ -124,6 +124,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .agent-list-item.selected { border-color: #cfe0d7; background: #eaf3ee; box-shadow: inset 3px 0 0 #4c9a84; }
 .mini-avatar, .hero-avatar { position: relative; flex: 0 0 auto; display: grid; place-items: center; border: 2px solid #fff; border-radius: 13px 13px 16px 16px; color: #fff; background: linear-gradient(145deg, var(--mini), var(--mini-accent)); box-shadow: 0 0 0 1px rgba(43,68,62,.12); font-weight: 850; }
 .mini-avatar { width: 37px; height: 37px; font-size: 11px; }
+.mini-avatar > .agent-figure { width: 31px; height: 42px; left: 1px; bottom: -5px; animation: none; filter: none; }
 .mini-avatar i, .hero-avatar i { position: absolute; right: -2px; bottom: -2px; width: 10px; height: 10px; border: 2px solid #fff; border-radius: 50%; background: #93a19e; }
 .mini-avatar i.working, .hero-avatar i.working { background: #4eb178; }
 .mini-avatar i.review, .hero-avatar i.review { background: #e1a84e; }
@@ -352,6 +353,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .detail-head { min-height: 99px; padding: 19px 17px 14px; display: grid; grid-template-columns: 52px 1fr auto; align-items: center; gap: 11px; border-bottom: 1px solid #e4ebe6; position: relative; }
 .detail-close { display: none; width: 34px; height: 34px; position: absolute; right: 12px; top: 12px; place-items: center; border: 0; border-radius: 10px; background: #eef3ef; cursor: pointer; }
 .hero-avatar { width: 52px; height: 52px; border-radius: 17px 17px 21px 21px; font-size: 16px; }
+.hero-avatar > .agent-figure { width: 44px; height: 59px; left: 2px; bottom: -7px; animation: none; filter: none; }
 .hero-avatar i { width: 12px; height: 12px; }
 .hero-avatar { cursor: pointer; }
 .hero-avatar b { width: 19px; height: 19px; position: absolute; left: -5px; bottom: -5px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 7px; color: #fff4ca; background: #367b6d; box-shadow: 0 3px 8px rgba(33,71,63,.2); }
