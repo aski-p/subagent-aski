@@ -1,7 +1,19 @@
 import { SignJWT, jwtVerify } from 'jose';
-import { SessionPayload, UserPrefs } from './types';
 
-export { SessionPayload, UserPrefs };
+export type SessionPayload = {
+  userId: string;
+  username: string;
+  avatar: string;
+  role: 'admin' | 'developer' | 'viewer';
+  iat?: number;
+  exp?: number;
+};
+
+export type UserPrefs = {
+  githubToken: string;
+  defaultRepo: string;
+  theme: string;
+};
 
 const JWT_SECRET = new TextEncoder().encode(
   process.env.JWT_SECRET || 'subagent-aski-jwt-secret-change-me'
