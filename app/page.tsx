@@ -338,7 +338,76 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [hireForm, setHireForm] = useState({ name: "", role: "UI/UX 디자이너", model: "GPT SOL" });
+  const [authUser, setAuthUser] = useState<{ username: string; avatar?: string } | null>(null);
+  const [showPrPanel, setShowPrPanel] = useState(false);
+  const [prLoading, setPrLoading] = useState(false);
+  const [prError, setPrError] = useState("");
+  const [pulls, setPulls] = useState<Array<{ id: number; number: number; title: string; state: string; html_url: string }>>([]);
   const officeSceneRef = useRef<HTMLDivElement>(null);
+
+  // Check auth session on mount
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data?.authenticated && data?.user) {
+          setAuthUser(data.user);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const handleGithubLogin = () => {
+    window.location.href = "/api/auth/login";
+  };
+
+  const fetchPulls = async () => {
+    setShowPrPanel((v) => !v);
+    if (showPrPanel) return;
+    setPrLoading(true);
+    setPrError("");
+    setPulls([]);
+    try {
+      const res = await fetch("/api/repo/pulls?repo_name=subagent-aski");
+      if (!res.ok) {
+        setPrError(res.status === 401 ? "로그인이 필요합니다" : "PR 목록을 불러올 수 없습니다");
+        return;
+      }
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setPulls(data.slice(0, 5).map((p: any) => ({
+          id: p.id,
+          number: p.number,
+          title: p.title,
+          state: p.state,
+          html_url: p.html_url,
+        })));
+      }
+    } catch (e: any) {
+      setPrError(e?.message || "네트워크 오류");
+    } finally {
+      setPrLoading(false);
+    }
+  };
+
+  // Refresh pulls when user logs in
+  useEffect(() => {
+    if (authUser) fetchPulls();
+  }, [authUser]);
+
+  // Close PR panel on outside click
+  useEffect(() => {
+    if (!showPrPanel) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.pr-btn') && !target.closest('.pr-panel')) {
+        setShowPrPanel(false);
+      }
+    };
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [showPrPanel]);
+
   const pressTimerRef = useRef<number | null>(null);
   const draggingIdRef = useRef<string | null>(null);
   const dragMovedRef = useRef(false);
@@ -777,7 +846,7 @@ export default function Home() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header className="topbar" style={{ position: "relative" }}>
         <div className="brand-block">
           <button className="mobile-menu" onClick={() => setMobileTeamOpen((value) => !value)} aria-label="팀 목록 열기">
             <Icon name="menu" />
@@ -800,8 +869,45 @@ export default function Home() {
 
         <div className="top-actions">
           <button className="icon-button notification" aria-label="알림" onClick={() => setNotificationOpen(true)}><Icon name="bell" />{events.length > 0 && <i />}</button>
-          <div className="owner-avatar">GH</div>
+          {authUser ? (
+            <>
+              <button className="icon-button pr-btn" aria-label="PR 목록" onClick={fetchPulls} title="PR 목록" style={{ position: "relative" }}>
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7 11.5V6h1v5.5H7zm3.5-2L8 8.5 4.5 9.5 8 13l3.5-3.5zm-7-1l3.5-3.5L8 3l3.5 3.5L8 10l-3.5-3.5z"/></svg>
+                {pulls.length > 0 && <i />}
+              </button>
+              <div className="owner-avatar" title={`${authUser.username} — 로그인됨`}>
+                {authUser.avatar ? <img src={authUser.avatar} alt={authUser.username} /> : authUser.username.charAt(0).toUpperCase()}
+              </div>
+            </>
+          ) : (
+            <button className="github-login-btn" onClick={handleGithubLogin} title="GitHub로 로그인">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.07-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.15 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+              <span>GitHub 로그인</span>
+            </button>
+          )}
         </div>
+
+        {/* PR Panel */}
+        {showPrPanel && (
+          <div className="pr-panel">
+            <div className="pr-panel-header">OPEN PULL REQUESTS</div>
+            <div className="pr-panel-body">
+              {prLoading && <div className="pr-loading">불러오는 중...</div>}
+              {prError && <div className="pr-error">{prError}</div>}
+              {!prLoading && !prError && pulls.map((pr) => (
+                <a key={pr.id} href={pr.html_url} target="_blank" rel="noopener noreferrer" className="pr-item">
+                  <span className={`pr-item-dot ${pr.state}`} />
+                  <span className="pr-item-title">{pr.title}</span>
+                  <span className="pr-item-num">#{pr.number}</span>
+                </a>
+              ))}
+              {!prLoading && !prError && pulls.length === 0 && <div className="pr-loading">공개 PR 없음</div>}
+            </div>
+            <div className="pr-panel-footer">
+              <a href="https://github.com/aski-p/subagent-aski/pulls" target="_blank" rel="noopener noreferrer">GitHub에서 전체 보기 →</a>
+            </div>
+          </div>
+        )}
       </header>
 
       <div className="workspace-grid">
