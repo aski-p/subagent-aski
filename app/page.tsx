@@ -11,6 +11,12 @@ import {
   startRun,
   stopRun,
 } from "@/lib/office-domain";
+import { buildAgentIssueUrl, type AgentRunStatus } from "@/lib/github-projects";
+import {
+  beginProjectRequest,
+  isCurrentProjectRequest,
+  type ProjectRequestGuard,
+} from "@/lib/project-request-guard";
 import { ToonAgent, type ToonAgentStatus } from "./components/toon-agent";
 import { categoryMeta, characterPresets, getCharacterPreset, officeSkins, type CharacterCategory } from "./character-data";
 
@@ -65,6 +71,27 @@ type PersistedOffice = {
   nextAgentNumber: number;
   events: EventItem[];
   brief: string;
+};
+
+type GithubProject = {
+  owner: string;
+  name: string;
+  fullName: string;
+  private: boolean;
+  description: string;
+  defaultBranch: string;
+  updatedAt: string;
+  htmlUrl: string;
+};
+
+type GithubAgentRun = {
+  id: number;
+  number: number;
+  title: string;
+  status: AgentRunStatus;
+  url: string;
+  updatedAt: string;
+  closed: boolean;
 };
 
 const STORAGE_KEY = "agent-office:v3";
@@ -338,62 +365,119 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [hireForm, setHireForm] = useState({ name: "", role: "UI/UX 디자이너", model: "GPT SOL" });
-  const [authUser, setAuthUser] = useState<{ username: string; avatar?: string } | null>(null);
   const [showPrPanel, setShowPrPanel] = useState(false);
   const [prLoading, setPrLoading] = useState(false);
   const [prError, setPrError] = useState("");
   const [pulls, setPulls] = useState<Array<{ id: number; number: number; title: string; state: string; html_url: string }>>([]);
+  const [githubProjects, setGithubProjects] = useState<GithubProject[]>([]);
+  const [selectedProjectName, setSelectedProjectName] = useState("");
+  const [projectRuns, setProjectRuns] = useState<GithubAgentRun[]>([]);
+  const [projectRunsError, setProjectRunsError] = useState("");
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [projectsError, setProjectsError] = useState("");
   const officeSceneRef = useRef<HTMLDivElement>(null);
+  const pullRequestGuardRef = useRef<ProjectRequestGuard>({ version: 0, repo: "" });
 
-  // Check auth session on mount
   useEffect(() => {
-    fetch("/api/auth/session")
-      .then((r) => r.json())
-      .then((data) => {
-        if (data?.authenticated && data?.user) {
-          setAuthUser(data.user);
-        }
+    let canceled = false;
+    fetch("/api/projects")
+      .then(async (response) => {
+        if (!response.ok) throw new Error("GitHub 프로젝트를 불러올 수 없습니다");
+        return response.json();
       })
-      .catch(() => {});
+      .then((data) => {
+        if (canceled) return;
+        const projects = Array.isArray(data?.projects) ? data.projects as GithubProject[] : [];
+        setGithubProjects(projects);
+        setSelectedProjectName((current) => current || projects[0]?.name || "");
+      })
+      .catch((error: unknown) => {
+        if (!canceled) setProjectsError(error instanceof Error ? error.message : "GitHub 프로젝트 오류");
+      })
+      .finally(() => {
+        if (!canceled) setProjectsLoading(false);
+      });
+    return () => { canceled = true; };
   }, []);
 
-  const handleGithubLogin = () => {
-    window.location.href = "/api/auth/login";
+  useEffect(() => {
+    if (!selectedProjectName) return;
+    let canceled = false;
+    const refresh = () => fetch(`/api/projects/${encodeURIComponent(selectedProjectName)}/runs`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("run list unavailable")))
+      .then((data) => {
+        if (!canceled) {
+          setProjectRuns(Array.isArray(data?.runs) ? data.runs as GithubAgentRun[] : []);
+          setProjectRunsError("");
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setProjectRuns([]);
+          setProjectRunsError("GitHub 작업 상태 업데이트가 지연되고 있어요.");
+        }
+      });
+    void refresh();
+    const timer = window.setInterval(refresh, 30000);
+    return () => {
+      canceled = true;
+      window.clearInterval(timer);
+    };
+  }, [selectedProjectName]);
+
+  const selectGithubProject = (repoName: string) => {
+    pullRequestGuardRef.current = beginProjectRequest(pullRequestGuardRef.current, repoName);
+    setSelectedProjectName(repoName);
+    setProjectRuns([]);
+    setProjectRunsError("");
+    setPulls([]);
+    setPrLoading(false);
+    setPrError("");
+    setShowPrPanel(false);
   };
 
   const fetchPulls = async () => {
+    const repoName = selectedProjectName;
+    if (!repoName) {
+      setShowPrPanel(true);
+      setPrError("GitHub 프로젝트를 먼저 선택해 주세요.");
+      return;
+    }
+    const request = beginProjectRequest(pullRequestGuardRef.current, repoName);
+    pullRequestGuardRef.current = request;
     setShowPrPanel((v) => !v);
-    if (showPrPanel) return;
+    if (showPrPanel) {
+      setPrLoading(false);
+      return;
+    }
     setPrLoading(true);
     setPrError("");
     setPulls([]);
     try {
-      const res = await fetch("/api/repo/pulls?repo_name=subagent-aski");
+      const res = await fetch(`/api/repo/pulls?repo_name=${encodeURIComponent(repoName)}`);
+      if (!isCurrentProjectRequest(pullRequestGuardRef.current, request)) return;
       if (!res.ok) {
-        setPrError(res.status === 401 ? "로그인이 필요합니다" : "PR 목록을 불러올 수 없습니다");
+        setPrError("PR 목록을 불러올 수 없습니다");
         return;
       }
-      const data = await res.json();
+      const data: unknown = await res.json();
+      if (!isCurrentProjectRequest(pullRequestGuardRef.current, request)) return;
       if (Array.isArray(data)) {
-        setPulls(data.slice(0, 5).map((p: any) => ({
-          id: p.id,
-          number: p.number,
-          title: p.title,
-          state: p.state,
-          html_url: p.html_url,
-        })));
+        setPulls(data.slice(0, 5).flatMap((item) => {
+          if (!item || typeof item !== "object") return [];
+          const pull = item as Record<string, unknown>;
+          if (typeof pull.id !== "number" || typeof pull.number !== "number" || typeof pull.title !== "string" || typeof pull.state !== "string" || typeof pull.html_url !== "string") return [];
+          return [{ id: pull.id, number: pull.number, title: pull.title, state: pull.state, html_url: pull.html_url }];
+        }));
       }
-    } catch (e: any) {
-      setPrError(e?.message || "네트워크 오류");
+    } catch (error: unknown) {
+      if (isCurrentProjectRequest(pullRequestGuardRef.current, request)) {
+        setPrError(error instanceof Error ? error.message : "네트워크 오류");
+      }
     } finally {
-      setPrLoading(false);
+      if (isCurrentProjectRequest(pullRequestGuardRef.current, request)) setPrLoading(false);
     }
   };
-
-  // Refresh pulls when user logs in
-  useEffect(() => {
-    if (authUser) fetchPulls();
-  }, [authUser]);
 
   // Close PR panel on outside click
   useEffect(() => {
@@ -416,6 +500,8 @@ export default function Home() {
   const toastTimerRef = useRef<number | null>(null);
 
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
+  const selectedProject = githubProjects.find((project) => project.name === selectedProjectName) ?? null;
+  const activeProjectRun = projectRuns.find((run) => !run.closed && run.status !== "done") ?? projectRuns[0] ?? null;
   const selectedPreset = selected ? getCharacterPreset(selected.avatar.presetId) : null;
   const currentSkin = officeSkins.find((skin) => skin.id === officeSkinId) ?? officeSkins[0];
   const runState: RunState = officeState.run.status === "draft" ? "stopped" : officeState.run.status;
@@ -723,30 +809,26 @@ export default function Home() {
     event.preventDefault();
     const objective = brief.trim();
     if (!objective) return;
-    if (officeState.run.status === "running" || officeState.run.status === "paused") {
-      showToast("현재 미션을 중지한 뒤 새 미션을 시작해 주세요.");
+    if (!selectedProject) {
+      showToast(projectsLoading ? "GitHub 프로젝트를 불러오는 중이에요." : "작업할 GitHub 프로젝트를 먼저 선택해 주세요.");
       return;
     }
-    setOfficeState((current) => startRun(current, {
-      objective,
-      idempotencyKey: `mission-${current.events.length}-${objective}`,
-    }));
-    setAgents((current) => current.map((agent, index) => ({
-      ...agent,
-      state: index === 0 ? "review" : "working",
-      progress: Math.max(6, Math.min(agent.progress, 18)),
-      task: {
-        pm: "새 브리프 범위·완료 조건 판단",
-        planner: "새 브리프 기능·예외 흐름 분해",
-        designer: "핵심 화면 UX 및 비주얼 설계",
-        developer: "구현 구조와 컴포넌트 작업",
-        qa: "인수 기준과 테스트 시나리오 설계",
-        researcher: "유사 사례와 기술 리스크 조사",
-      }[agent.roleKey] ?? "새 브리프 작업",
-      speech: index === 0 ? "먼저 목표와 범위를 판단할게요." : "새 임무를 확인했어요!",
-    })));
-    addEvent("새 미션이 시작됨", brief.trim(), "blue");
-    showToast("브리프를 6개 역할로 나눴어요.");
+    try {
+      const issueUrl = buildAgentIssueUrl({
+        owner: selectedProject.owner,
+        repo: selectedProject.name,
+        objective,
+      });
+      const opened = window.open(issueUrl, "_blank", "noopener,noreferrer");
+      if (!opened) {
+        window.location.assign(issueUrl);
+        return;
+      }
+      addEvent("GitHub 미션 등록 대기", `${selectedProject.fullName} · GitHub에서 이슈 생성을 확인해 주세요.`, "blue");
+      showToast("GitHub에서 이슈 생성을 누르면 실제 에이전트 작업이 시작돼요.");
+    } catch {
+      showToast("프로젝트나 미션 형식이 올바르지 않아요.");
+    }
   };
 
   const sendInstruction = (event: FormEvent) => {
@@ -858,8 +940,8 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="run-cluster" aria-label="프로젝트 실행 제어">
-          <div className={`run-state ${runState}`}><i />{runState === "running" ? "실행 중" : runState === "paused" ? "일시정지" : runState === "completed" ? "완료됨" : "중지됨"}</div>
+        <div className="run-cluster" aria-label="오피스 미리보기 실행 제어">
+          <div className={`run-state ${runState}`}><i />미리보기 {runState === "running" ? "실행 중" : runState === "paused" ? "일시정지" : runState === "completed" ? "완료됨" : "중지됨"}</div>
           <div className="segmented-controls">
             <button className={runState === "running" ? "active" : ""} onClick={() => setProjectState("running")} title={runState === "paused" ? "재개" : "실행"} disabled={runState === "running" || runState === "completed"}><Icon name="play" size={16} /></button>
             <button className={runState === "paused" ? "active" : ""} onClick={() => setProjectState("paused")} title="일시정지" disabled={runState !== "running"}><Icon name="pause" size={16} /></button>
@@ -869,22 +951,14 @@ export default function Home() {
 
         <div className="top-actions">
           <button className="icon-button notification" aria-label="알림" onClick={() => setNotificationOpen(true)}><Icon name="bell" />{events.length > 0 && <i />}</button>
-          {authUser ? (
-            <>
-              <button className="icon-button pr-btn" aria-label="PR 목록" onClick={fetchPulls} title="PR 목록" style={{ position: "relative" }}>
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7 11.5V6h1v5.5H7zm3.5-2L8 8.5 4.5 9.5 8 13l3.5-3.5zm-7-1l3.5-3.5L8 3l3.5 3.5L8 10l-3.5-3.5z"/></svg>
-                {pulls.length > 0 && <i />}
-              </button>
-              <div className="owner-avatar" title={`${authUser.username} — 로그인됨`}>
-                {authUser.avatar ? <img src={authUser.avatar} alt={authUser.username} /> : authUser.username.charAt(0).toUpperCase()}
-              </div>
-            </>
-          ) : (
-            <button className="github-login-btn" onClick={handleGithubLogin} title="GitHub로 로그인">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.07-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.15 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-              <span>GitHub 로그인</span>
-            </button>
-          )}
+          <button className="icon-button pr-btn" aria-label="PR 목록" onClick={fetchPulls} title="선택 프로젝트의 공개 PR 목록" style={{ position: "relative" }} disabled={!selectedProjectName}>
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M7 11.5V6h1v5.5H7zm3.5-2L8 8.5 4.5 9.5 8 13l3.5-3.5zm-7-1l3.5-3.5L8 3l3.5 3.5L8 10l-3.5-3.5z"/></svg>
+            {pulls.length > 0 && <i />}
+          </button>
+          <a className="github-login-btn" href={selectedProject?.htmlUrl || "https://github.com/aski-p"} target="_blank" rel="noopener noreferrer" title="GitHub 프로젝트 열기">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.07-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.15 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            <span>GitHub</span>
+          </a>
         </div>
 
         {/* PR Panel */}
@@ -904,7 +978,7 @@ export default function Home() {
               {!prLoading && !prError && pulls.length === 0 && <div className="pr-loading">공개 PR 없음</div>}
             </div>
             <div className="pr-panel-footer">
-              <a href="https://github.com/aski-p/subagent-aski/pulls" target="_blank" rel="noopener noreferrer">GitHub에서 전체 보기 →</a>
+              <a href={`https://github.com/aski-p/${selectedProjectName || "subagent-aski"}/pulls`} target="_blank" rel="noopener noreferrer">GitHub에서 전체 보기 →</a>
             </div>
           </div>
         )}
@@ -952,18 +1026,37 @@ export default function Home() {
         <section className="center-stage">
           <form className="mission-composer" onSubmit={launchBrief}>
             <div className="composer-icon"><Icon name="spark" size={20} /></div>
-            <label>
-              <span>오늘 팀이 완성할 목표</span>
+            <label className="project-picker">
+              <span>GITHUB PROJECT</span>
+              <select
+                value={selectedProjectName}
+                onChange={(event) => selectGithubProject(event.target.value)}
+                aria-label="GitHub 프로젝트"
+                disabled={projectsLoading || githubProjects.length === 0}
+              >
+                {projectsLoading && <option value="">불러오는 중...</option>}
+                {!projectsLoading && githubProjects.length === 0 && <option value="">연결 가능한 프로젝트 없음</option>}
+                {githubProjects.map((project) => <option key={project.fullName} value={project.name}>{project.fullName}{project.private ? " · private" : ""}</option>)}
+              </select>
+            </label>
+            <label className="objective-field">
+              <span>실제 에이전트에게 맡길 목표</span>
               <input value={brief} onChange={(event) => setBrief(event.target.value)} aria-label="프로젝트 목표" />
             </label>
-            <button type="submit" disabled={!brief.trim() || runState === "running" || runState === "paused"}><Icon name="play" size={16} />{runState === "running" || runState === "paused" ? "미션 진행 중" : "미션 실행"}</button>
+            <button type="submit" disabled={!brief.trim() || !selectedProject || projectsLoading}><Icon name="play" size={16} />GitHub 작업 등록</button>
+            {(projectsError || projectRunsError) && <small className="project-connection-error">{projectsError || projectRunsError}</small>}
+            {activeProjectRun && (
+              <a className={`agent-run-status status-${activeProjectRun.status}`} href={activeProjectRun.url} target="_blank" rel="noopener noreferrer">
+                #{activeProjectRun.number} · {activeProjectRun.status}
+              </a>
+            )}
           </form>
 
           <section className={`office-card ${runState}`} aria-label="가상 에이전트 사무실">
             <div className="office-toolbar">
               <div>
-                <span className="live-pill"><i /> LIVE OFFICE</span>
-                <strong>{currentSkin.name}</strong>
+                <span className="live-pill preview"><i /> PREVIEW OFFICE</span>
+                <strong>{currentSkin.name}<small className="truth-label">실제 작업 상태는 GitHub 이슈·PR 기준</small></strong>
               </div>
               <div className="office-metrics">
                 <span><Icon name="users" size={15} />{workingCount} working</span>
@@ -1030,8 +1123,8 @@ export default function Home() {
 
           <section className="workflow-card">
             <div className="section-title-row">
-              <div><span>ACTIVE WORKFLOW</span><strong>프로젝트 파이프라인</strong></div>
-              <small>자동 핸드오프 켜짐 <i /></small>
+              <div><span>PREVIEW WORKFLOW</span><strong>역할 파이프라인 미리보기</strong></div>
+              <small>실제 전환은 GitHub label 기준 <i /></small>
             </div>
             <div className="workflow-track">
               {workflow.map((step, index) => (
