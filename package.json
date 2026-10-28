@@ -12,7 +12,8 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts tests/*.test.tsx",
-    "verify": "npm run lint && npm run typecheck && npm test && npm run build"
+    "verify": "npm run lint && npm run typecheck && npm test && npm run build",
+    "test:office-browser": "node tests/office-browser.mjs"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
@@ -22,6 +23,7 @@
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.45.1",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "4.2.1",
     "@types/node": "22.19.19",
     "@types/react": "19.2.14",
