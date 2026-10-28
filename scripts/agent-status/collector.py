@@ -63,33 +63,82 @@ def atomic(path,value):
  with open(temp,'w',encoding='utf8') as f:json.dump(value,f,separators=(',',':'))
  os.chmod(temp,0o600);os.replace(temp,path)
 
+MAX_LINE=256*1024
+DEFAULT_DISCOVERY_BUDGET=2048
+MAX_DISCOVERY_BUDGET=8192
+
 def read_records(path,cursor):
- stat=path.stat();offset=cursor.get('offset',0)
- if cursor.get('inode')!=stat.st_ino or stat.st_size<offset:offset=0
+ stat=path.stat();offset=cursor.get('offset',0);discard=bool(cursor.get('discard',False))
+ if cursor.get('inode')!=stat.st_ino or stat.st_size<offset:offset=0;discard=False
+ prefix=b''
  with path.open('rb') as f:
   if offset==0 and stat.st_size>LIMIT:
-   head=f.read(256*1024);f.seek(max(len(head),stat.st_size-LIMIT+len(head)));f.readline();raw=head+b'\n'+f.read(LIMIT-len(head));end=f.tell()
+   # Initial history is bounded head/tail, including the skip to a tail line boundary.
+   # Never call unbounded readline() on an ignored image/tool record.
+   head=f.read(MAX_LINE);boundary=head.rfind(b'\n');prefix=head[:boundary+1] if boundary>=0 else b''
+   f.seek(max(len(head),stat.st_size-(LIMIT-len(head))));raw=f.read(LIMIT-len(head));discard=True
   else:
-   f.seek(offset);raw=f.read(LIMIT);end=f.tell()
- # Retain incomplete final line for next poll; malformed complete records are ignored.
- if raw and not raw.endswith(b'\n'):
-  complete=raw.rfind(b'\n');end-=len(raw)-complete-1;raw=raw[:complete+1] if complete>=0 else b''
+   f.seek(offset);raw=f.read(LIMIT)
+  end=f.tell()
+ if discard:
+  boundary=raw.find(b'\n')
+  if boundary<0:raw=b''
+  else:raw=raw[boundary+1:];discard=False
+ # Allowed-size incomplete lines retry; oversized incomplete records are discarded
+ # in bounded chunks until newline, always advancing without storing their bytes.
+ boundary=raw.rfind(b'\n');tail=raw[boundary+1:]
+ if len(tail)>MAX_LINE:discard=True
+ else:end-=len(tail)
+ complete=prefix+(raw[:boundary+1] if boundary>=0 else b'')
  records=[]
- for line in raw.splitlines():
-  if len(line)>256*1024:continue
+ for line in complete.splitlines():
+  if len(line)>MAX_LINE:continue
   try:records.append(json.loads(line))
   except (ValueError,UnicodeError):pass
- return records,{'inode':stat.st_ino,'offset':end}
+ return records,{'inode':stat.st_ino,'offset':end,'discard':discard}
 
-def source_files(config):
- # Explicit operator-owned roots only, bounded most recently modified candidates across dates.
- paths=[Path(p).resolve() for p in config.get('files',[])]
- for root in config.get('roots',[]):
-  root=Path(root).resolve()
+def source_files(config,stats=None):
+ # Discovery work has its own entry budget, independent of selected-file/read caps.
+ # Explicit known sessions take precedence, including parents under older date dirs.
+ budget=config.get('discoveryBudget',DEFAULT_DISCOVERY_BUDGET)
+ max_files=config.get('maxFiles',32)
+ if not isinstance(budget,int) or not 1<=budget<=MAX_DISCOVERY_BUDGET:raise ValueError('invalid_discovery_budget')
+ if not isinstance(max_files,int) or not 1<=max_files<=64:raise ValueError('invalid_max_files')
+ declared=config.get('files',[]);roots=config.get('roots',[])
+ if not isinstance(declared,list) or not isinstance(roots,list) or len(roots)>8:raise ValueError('invalid_sources')
+ limited=len(declared)>64;explicit=[];candidates=[];visited=0
+ for name in declared[:64]:
+  path=Path(name)
+  if path.is_symlink() or path.suffix!='.jsonl':continue
+  path=path.resolve()
+  if path.is_file() and path not in explicit:explicit.append(path)
+ stack=[]
+ for name in roots:
+  root=Path(name)
+  if root.is_symlink():raise ValueError('invalid_source_root')
+  root=root.resolve()
   if root.name not in ('sessions','projects'):raise ValueError('invalid_source_root')
-  paths.extend(root.rglob('*.jsonl'))
- paths=[p for p in paths if p.is_file() and p.suffix=='.jsonl' and not p.is_symlink()]
- return sorted(set(paths),key=lambda p:p.stat().st_mtime,reverse=True)[:min(config.get('maxFiles',32),64)]
+  stack.append(root)
+ while stack and visited<budget:
+  directory=stack.pop()
+  try:
+   with os.scandir(directory) as entries:
+    while visited<budget:
+     try:entry=next(entries)
+     except StopIteration:break
+     visited+=1
+     if entry.is_symlink():continue
+     if entry.is_dir(follow_symlinks=False):stack.append(Path(entry.path))
+     elif entry.name.endswith('.jsonl') and entry.is_file(follow_symlinks=False):
+      candidates.append((entry.stat(follow_symlinks=False).st_mtime,Path(entry.path)))
+    if visited>=budget:limited=True
+  except OSError:limited=True
+ if stack:limited=True
+ candidates.sort(key=lambda item:item[0],reverse=True)
+ paths=list(dict.fromkeys(explicit+[p for _,p in candidates]))
+ if len(paths)>max_files:limited=True
+ if stats is not None:stats.update(entriesVisited=visited,discoveryBudget=budget)
+ return paths[:max_files],limited
 
 def collect(source,reg,cache):
  cfg=reg.get('sources',{}).get(source,{});now=iso();agents=[];events=[];reason=None
@@ -97,17 +146,21 @@ def collect(source,reg,cache):
   path=Path(cfg.get('boardFile','/home/aski/agent-shared/board.json'))
   if path.stat().st_size>LIMIT:raise ValueError('source_unavailable')
   board=json.loads(path.read_text());last=[]
+  if not isinstance(board,dict) or not isinstance(board.get('status'),dict):raise ValueError('invalid_board')
+  statuses=board['status']
   # Source-owned board contains arbitrary prose: use only reviewed IDs + timestamps/status enums.
   for who,mapping in reg.get('boardAgents',{}).items():
-   value=board.get('status',{}).get(who,{})
-   if not isinstance(value,dict):continue
+   value=statuses.get(who)
+   if value is None:continue
+   if not isinstance(value,dict):raise ValueError('invalid_board')
    at=stamp(value.get('at') or value.get('updatedAt'));last.append(at) if at else None
    aid=identity(reg['identitySalt'],source,who)
    agents.append({'id':aid,'name':mapping.get('name'),'roleId':mapping.get('roleId'),'parentId':None,'provider':None,'model':None,'projectId':mapping.get('projectId'),'currentTaskId':mapping.get('taskId'),'status':'unknown','lastActivityAt':at,'lastSeenAt':now,'source':source})
   activity=max(last,default=None)
  else:
-  paths=source_files(cfg)
-  if not paths:reason='no_selected_sessions'
+  paths,limited=source_files(cfg)
+  if limited:reason='discovery_limited'
+  elif not paths:reason='no_selected_sessions'
   keep={}
   for path in paths:
    key=str(path);old=cache.get(key,{})

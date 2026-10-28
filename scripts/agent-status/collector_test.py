@@ -19,3 +19,56 @@ with tempfile.TemporaryDirectory() as d:
  reg.update(sources={'pgx-relay':{'boardFile':str(board)}},boardAgents={'codex':{'name':'Forge','roleId':'forge'}})
  assert 'SENTINEL_SECRET' not in json.dumps(collect('pgx-relay',reg,{}))
 print('structural boundary: pass')
+
+# Regression: oversized ignored appends must not pin the cursor/heartbeat forever.
+from collector import LIMIT, run_once, source_files
+from unittest.mock import patch
+import io, contextlib, os
+with tempfile.TemporaryDirectory() as d:
+ root=Path(d); p=root/'session.jsonl';p.write_text(json.dumps(records[0])+'\n');_,cursor=read_records(p,{})
+ with p.open('a') as f:f.write('{"type":"response_item","text":"'+'x'*(LIMIT*2)+'"}\n'+json.dumps({'type':'event_msg','timestamp':now,'payload':{'type':'task_complete'}})+'\n')
+ found=[];offsets=[]
+ for _ in range(4):
+  rs,cursor=read_records(p,cursor);found.extend(rs);offsets.append(cursor['offset'])
+ assert any(x.get('payload',{}).get('type')=='task_complete' for x in found),offsets
+ assert all(b>a for a,b in zip(offsets[:2],offsets[1:3])),offsets
+ assert not any(x.get('type')=='response_item' for x in found)
+ # An initial large file still projects its bounded metadata head, even if tail
+ # is wholly inside an unfinished oversized ignored record.
+ initial=root/'initial.jsonl';initial.write_text(json.dumps(records[0])+'\n'+'x'*(LIMIT+100))
+ rs,initial_cursor=read_records(initial,{})
+ assert rs[0]['type']=='session_meta' and initial_cursor['discard'] is True
+ print('oversized record: bounded progress and completion observed')
+ # Malformed board must retain its spool and allow both subsequent sources to collect.
+ board=root/'board.json';board.write_text(json.dumps({'status':{'codex':{'at':now}}}))
+ codex=root/'codex.jsonl';codex.write_text(json.dumps(records[0])+'\n')
+ claude=root/'claude.jsonl';claude.write_text(json.dumps({'type':'assistant','sessionId':'claude-real-session','timestamp':now,'message':{'model':'claude-real','content':'SENTINEL_SECRET'}})+'\n')
+ registry=root/'registry.json';reg['sources']={'pgx-relay':{'boardFile':str(board)},'pgx-codex':{'files':[str(codex)]},'pgx-claude':{'files':[str(claude)]}};registry.write_text(json.dumps(reg))
+ spool=root/'spool';cache=root/'cache.json';run_once(registry,spool,cache,('pgx-relay',));good=(spool/'pgx-relay.json').read_bytes()
+ for malformed in ({'status':[]},[],{'status':{'codex':[]}}):
+  board.write_text(json.dumps(malformed));out=io.StringIO()
+  with contextlib.redirect_stdout(out):run_once(registry,spool,cache,('pgx-relay','pgx-codex','pgx-claude'))
+  assert (spool/'pgx-relay.json').read_bytes()==good
+  assert json.loads((spool/'pgx-codex.json').read_text())['agents']
+  assert json.loads((spool/'pgx-claude.json').read_text())['agents']
+  assert out.getvalue().strip()=='pgx-relay: source_unavailable'
+ print('malformed board: last good retained and other sources continue')
+ # Declare and count discovery I/O; explicit older session must always be selectable.
+ sessions=root/'sessions';sessions.mkdir();old=sessions/'old-parent.jsonl';old.write_text('')
+ for i in range(100):(sessions/f'{i:03d}.jsonl').write_text('')
+ stats={};actual_visits=[0];original_scandir=os.scandir
+ @contextlib.contextmanager
+ def counted_scandir(directory):
+  with original_scandir(directory) as entries:
+   def counted_entries():
+    for entry in entries:
+     actual_visits[0]+=1;yield entry
+   yield counted_entries()
+ with patch('collector.os.scandir',counted_scandir):
+  paths,limited=source_files({'roots':[str(sessions)],'files':[str(old)],'discoveryBudget':7,'maxFiles':2},stats)
+ assert actual_visits[0]==stats['entriesVisited']==7,actual_visits
+ assert stats['entriesVisited']<=7 and limited and old.resolve() in paths,stats
+ reg['sources']['pgx-codex']={'roots':[str(sessions)],'files':[str(codex)],'discoveryBudget':7}
+ snap=collect('pgx-codex',reg,{})
+ assert snap['coverage'][0]['reasonCode']=='discovery_limited'
+ print('discovery budget: <=7 entries; explicit older file retained; limited coverage reported')

@@ -20,7 +20,7 @@ export function createServer({spoolDir,token,snapshotPath=undefined}) {
  let queue=Promise.resolve();
  return http.createServer((req,res)=>{res.setHeader("Cache-Control","private, no-store");res.setHeader("Content-Type","application/json");const send=(status,data)=>{res.statusCode=status;res.end(JSON.stringify(data));};
  if(req.url!=="/agent-office-status")return send(404,{error:"not_found"});if(req.method!=="GET")return send(405,{error:"method_not_allowed"});
- const credential=req.headers.authorization||"",expected="Bearer "+token;if(credential.length!==expected.length||!timingSafeEqual(Buffer.from(credential),Buffer.from(expected)))return send(401,{error:"unauthorized"});
+ const credential=Buffer.from(req.headers.authorization||""),expected=Buffer.from("Bearer "+token);if(credential.length!==expected.length||!timingSafeEqual(credential,expected))return send(401,{error:"unauthorized"});
  queue=queue.catch(()=>{}).then(async()=>{try{send(200,await snapshot());}catch{send(503,{error:"source_unavailable"});}});
  });
 }
