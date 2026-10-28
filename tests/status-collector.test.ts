@@ -71,3 +71,8 @@ with tempfile.TemporaryDirectory() as d:
  `],{encoding:"utf8"});
  assert.equal(result.status,0,result.stderr+result.stdout);
 });
+
+test("Windows exporter launches both OpenSSH children without console windows",()=>{
+ const result=spawnSync("python3",["scripts/agent-status/export_windows_test.py"],{encoding:"utf8"});
+ assert.equal(result.status,0,result.stderr+result.stdout);
+});
