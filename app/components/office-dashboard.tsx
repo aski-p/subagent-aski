@@ -1,31 +1,457 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchOfficeSnapshot, OfficeFetchError } from "@/lib/office-browser";
-import type { SnapshotV1, RoleId } from "@/lib/status-contract";
-import { ROLES, SOURCES } from "@/lib/status-contract";
+import { Avatar, roles } from "./role-avatar";
+import { AgentDetail } from "./agent-detail";
+import { SourceCoverageView } from "./source-coverage";
+import { usePublicEvidence } from "./public-evidence";
+import type { SnapshotV1 } from "@/lib/status-contract";
+import { ROLES } from "@/lib/status-contract";
 
-const roles: Record<RoleId,[string,string,string]>={atlas:["Atlas","방향과 판단","#575b9a"],forge:["Forge","개발과 구현","#a85e2c"],frame:["Frame","화면 구조와 사용성","#267b78"],palette:["Palette","시각 디자인과 일러스트","#9d4b76"],scout:["Scout","조사와 탐색","#707c35"],sentinel:["Sentinel","검증과 보안","#586e90"]};
-const time=(s:string|null|undefined)=>s?new Date(s).toLocaleString("ko-KR",{dateStyle:"short",timeStyle:"short"}):"확인 불가";
-function Avatar({role}:{role:RoleId}){return <svg className="avatar" viewBox="0 0 48 48" aria-hidden="true" style={{color:roles[role][2]}}>{role==="sentinel"?<path d="M8 12 24 6l16 6v13c0 9-7 14-16 18C15 39 8 34 8 25Z" fill="#f3f0ea" stroke="currentColor" strokeWidth="2"/>:<rect x="7" y="11" width="34" height="31" rx="10" fill="#f3f0ea" stroke="currentColor" strokeWidth="2"/>}<path d="M18 26h.1M30 26h.1M21 33h6" stroke="#273a3a" strokeWidth="2.5" strokeLinecap="round"/>{role==="atlas"&&<path d="M19 12V3l9 4-9 4" fill="currentColor"/>}{role==="forge"&&<path d="M8 14h32l-3 7H11Z" fill="currentColor"/>}{role==="frame"&&<path d="m24 3 8 8-5 1-2 5Z" fill="currentColor"/>}{role==="palette"&&<path d="m10 11 5-7 19 4 3 5Z" fill="currentColor"/>}{role==="scout"&&<circle cx="30" cy="26" r="7" fill="none" stroke="currentColor" strokeWidth="2"/>}</svg>}
-type Project={name:string;fullName:string;htmlUrl:string;updatedAt:string};
-export default function OfficeDashboard(){
- const [auth,setAuth]=useState<"loading"|"out"|"owner">("loading");const [snapshot,setSnapshot]=useState<SnapshotV1|null>(null);const [stale,setStale]=useState(false);const [project,setProject]=useState("");const [provider,setProvider]=useState("");const [selected,setSelected]=useState<string|null>(null);const [projects,setProjects]=useState<Project[]>([]);const [visibleCount,setVisibleCount]=useState(20);const [runs,setRuns]=useState<{id:number;title:string;url:string;updatedAt:string;status:string}[]>([]);
- const generation=useRef(0);const active=useRef<AbortController|null>(null);const closeRef=useRef<HTMLButtonElement>(null);const lastFocus=useRef<HTMLElement|null>(null);
- useEffect(()=>{const guard=generation;let live=true;fetch("/api/auth/session",{cache:"no-store"}).then(r=>r.json()).then(x=>{if(live)setAuth(x.authenticated&&x.owner?"owner":"out")}).catch(()=>{if(live)setAuth("out")});fetch("/api/projects").then(r=>r.ok?r.json():null).then(x=>{if(live&&Array.isArray(x?.projects))setProjects(x.projects)}).catch(()=>{});return()=>{live=false;guard.current++;active.current?.abort()}},[]);
- const refresh=useCallback(async()=>{const id=++generation.current;active.current?.abort();const controller=new AbortController();active.current=controller;try{const data=await fetchOfficeSnapshot(controller.signal);if(id===generation.current){setSnapshot(data);setStale(false)}}catch(error){if(id!==generation.current||controller.signal.aborted)return;if(error instanceof OfficeFetchError&&(error.status===401||error.status===403)){setSnapshot(null);setAuth("out");setSelected(null)}else setStale(true)}},[]);
- useEffect(()=>{if(auth!=="owner")return;const guard=generation;const first=setTimeout(refresh,0);const t=setInterval(refresh,30000);return()=>{clearTimeout(first);clearInterval(t);guard.current++;active.current?.abort()}},[auth,project,refresh]);
- useEffect(()=>{if(!selected)return;lastFocus.current=document.activeElement as HTMLElement;closeRef.current?.focus();const key=(e:KeyboardEvent)=>{if(e.key==="Escape")setSelected(null);if(e.key==="Tab"){const panel=closeRef.current?.closest('[role="dialog"]');const nodes=panel?.querySelectorAll<HTMLElement>('button,a[href],[tabindex]:not([tabindex="-1"])');if(!nodes?.length)return;const first=nodes[0],last=nodes[nodes.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}};document.addEventListener("keydown",key);return()=>{document.removeEventListener("keydown",key);lastFocus.current?.focus()}},[selected]);
- useEffect(()=>{if(!project)return;let live=true;fetch('/api/projects/'+encodeURIComponent(project)+'/runs').then(r=>r.ok?r.json():null).then(x=>{if(live&&Array.isArray(x?.runs))setRuns(x.runs)}).catch(()=>{});return()=>{live=false}},[project]);
- const logout=async()=>{generation.current++;active.current?.abort();setSnapshot(null);setSelected(null);setAuth("out");await fetch("/api/auth/logout",{method:"POST"}).catch(()=>{})};
- const agent=snapshot?.agents.find(a=>a.id===selected);const filtered=snapshot?.agents.filter(a=>(!project||a.projectId===project)&&(!provider||a.provider===provider)).sort((a,b)=>Date.parse(b.lastActivityAt??b.lastSeenAt??"1970-01-01")-Date.parse(a.lastActivityAt??a.lastSeenAt??"1970-01-01"))??[];const tasks=snapshot?.tasks.filter(t=>!project||t.projectId===project)??[];const linked=agent?snapshot?.tasks.filter(t=>t.assigneeIds.includes(agent.id)||t.id===agent.currentTaskId)??[]:[];const ids=new Set(linked.map(t=>t.id));
- return <main><header className="top"><span className="brand"><span>✳</span> ASKI <b>office</b></span><nav><a href="https://aski-hub.vercel.app">Aski hub</a>{auth==="owner"?<button onClick={logout}>로그아웃</button>:<a className="login" href="/api/auth/github">GitHub 로그인</a>}</nav></header>
- <div className="shell"><section className="intro"><div><p className="eyebrow">ASKI의 작업 공간</p><h1>일의 흐름을<br/><em>한눈에.</em></h1><p>역할과 실제 업무 기록을 함께 살펴보세요.</p></div><div className="intro-note"><strong>읽기 전용 업무 명부</strong><p>역할은 팀의 구성입니다. 실제 활동은 확인된 기록으로 표시합니다.</p></div></section>
- <section className="roles"><div className="section-head"><div><p className="eyebrow">팀의 역할</p><h2>여섯 가지 관점</h2></div><p>역할 이름과 제공자·모델은 별개입니다.</p></div><div className="role-strip">{ROLES.map(r=><div className="role" key={r}><Avatar role={r}/><strong>{roles[r][0]}</strong><span>{roles[r][1]}</span></div>)}</div></section>
- {auth!=="owner"?<section className="signin"><div><p className="eyebrow">비공개 업무</p><h2>{auth==="loading"?"접근 권한 확인 중":"내 팀의 업무를 확인하세요"}</h2><p>소유자로 로그인하면 실제 에이전트와 작업 기록을 볼 수 있습니다.</p></div>{auth!=="loading"&&<a className="primary" href="/api/auth/github">GitHub로 로그인</a>}</section>:<><section className="workspace"><div className="section-head"><div><p className="eyebrow">업무 명부</p><h2>확인된 활동</h2></div><p>마지막으로 확인된 상태이며 현재 실행을 보장하지 않습니다.</p></div><div className="filters"><label>프로젝트 <select value={project} onChange={e=>{generation.current++;active.current?.abort();setProject(e.target.value);setVisibleCount(20);setSelected(null);setRuns([])}}><option value="">전체 프로젝트</option>{Array.from(new Set([...(snapshot?.agents.map(a=>a.projectId)??[]),...(snapshot?.tasks.map(t=>t.projectId)??[]),...projects.map(p=>p.name)].filter((x):x is string=>!!x))).map(p=><option key={p}>{p}</option>)}</select></label><label>제공자 <select value={provider} onChange={e=>{setProvider(e.target.value);setVisibleCount(20)}}><option value="">전체 제공자</option>{Array.from(new Set((snapshot?.agents??[]).map(a=>a.provider).filter((x):x is string=>!!x))).map(p=><option key={p}>{p}</option>)}</select></label><span>기준 시각 {time(snapshot?.observedAt)}</span></div>
- {stale&&<p className="warning" role="status">새 기록을 불러오지 못했습니다. {snapshot?"마지막으로 확인된 기록을 표시합니다.":"연결을 확인한 후 다시 시도합니다."}</p>}
- <div className="roster"><div className="roster-heading"><span>에이전트 / 역할</span><span>제공자 / 모델</span><span>마지막 업무</span><span>상태</span></div>{filtered.length?filtered.slice(0,visibleCount).map(a=><button className="roster-row" key={a.id} onClick={()=>setSelected(a.id)}><span className="person">{a.roleId?<Avatar role={a.roleId}/>:<span className="unknown">?</span>}<span><strong>{a.name??"이름 확인 불가"}</strong><small>{a.roleId?roles[a.roleId][0]:"역할 확인 불가"} · {a.projectId??"프로젝트 확인 불가"}</small></span></span><span>{a.provider??"제공자 확인 불가"}<small>{a.model??"모델 확인 불가"}</small></span><span>{time(a.lastActivityAt)}</span><span className="status">{({working:"작업 시작 기록",completed:"완료 기록",blocked:"차단됨",idle:"대기 기록",unknown:"확인 불가"})[a.status]}</span></button>):<div className="empty">{snapshot?"조건에 맞는 에이전트 기록이 없습니다.":"업무 기록을 기다리고 있습니다."}</div>}</div>{visibleCount<filtered.length&&<button className="more" onClick={()=>setVisibleCount(n=>n+20)}>더 보기 ({visibleCount} / {filtered.length})</button>}
- <h3 className="task-title">작업 <span>{tasks.length}</span></h3><div className="task-list">{tasks.length?tasks.map(t=><div key={t.id}><strong>{t.title??"제목 확인 불가"}</strong><span>{t.status==="qa"?"검증 중":t.status==="done"?"완료":t.status} · {time(t.updatedAt)}</span></div>):<p className="muted">확인된 작업이 없습니다.</p>}</div></section>
- <section className="coverage"><div className="section-head"><div><p className="eyebrow">수집 범위</p><h2>연결과 업무 기록</h2></div><p>수집기 연결은 현재 작업의 증거가 아닙니다.</p></div><div className="source-list">{SOURCES.map(source=>{const c=snapshot?.coverage.find(x=>x.source===source);return <div className="source-row" key={source}><div><strong>{source}</strong><b>{c?({connected:"연결됨",stale:"보고 지연",unknown:"확인 불가",offline:"연결 끊김"})[c.connection]:"확인 불가"}</b></div><div><span>수집 {time(c?.collectedAt)}</span><span>마지막 업무 {time(c?.lastActivityAt)}</span><span>{c?.coverage==="registered"?"등록됨":c?.coverage==="metadata-only"?"메타데이터만":"지원 여부 확인 필요"}{c?.reasonCode==="discovery_limited"?" · 선택된 최근 기록만 확인":""}</span></div></div>})}</div></section></>}
- <section className="public"><div className="section-head"><div><p className="eyebrow">공개 자료</p><h2>GitHub 프로젝트</h2></div><p>공개 저장소에서 가져온 별도의 기록입니다.</p></div><div className="public-list">{projects.map(p=><a key={p.name} href={p.htmlUrl} target="_blank" rel="noreferrer"><strong>{p.fullName}</strong><span>업데이트 {time(p.updatedAt)}</span></a>)}</div>{project&&runs.length>0&&<div className="task-list"><h3>{project} 공개 작업</h3>{runs.map(r=><div key={r.id}><a href={r.url} target="_blank" rel="noreferrer">{r.title}</a><span>{r.status} · {time(r.updatedAt)}</span></div>)}</div>}</section></div>
- {agent&&snapshot&&<div className="backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setSelected(null)}}><section className="detail" role="dialog" aria-modal="true" aria-labelledby="detail-title"><header><div><p className="eyebrow">업무 상세</p><h2 id="detail-title">{agent.name??"이름 확인 불가"}</h2></div><button ref={closeRef} onClick={()=>setSelected(null)}>닫기</button></header><dl><div><dt>제공자</dt><dd>{agent.provider??"확인 불가"}</dd></div><div><dt>모델</dt><dd>{agent.model??"확인 불가"}</dd></div><div><dt>출처</dt><dd>{agent.source}</dd></div><div><dt>마지막 업무</dt><dd>{time(agent.lastActivityAt)}</dd></div></dl><h3>연결된 작업</h3>{linked.length?linked.map(t=><p key={t.id}>{t.title??"제목 확인 불가"} <small>{t.status} · {time(t.updatedAt)}</small></p>):<p className="muted">확인된 작업이 없습니다.</p>}<h3>최근 이벤트</h3>{snapshot.events.filter(e=>e.agentId===agent.id||!!e.taskId&&ids.has(e.taskId)).map(e=><p key={e.id}>{e.publicSummary??e.type} <small>{time(e.occurredAt)}</small></p>)}<h3>결과물</h3>{snapshot.artifacts.filter(a=>a.taskId&&ids.has(a.taskId)).map(a=><p key={a.id}>{a.safeUrl?<a href={a.safeUrl} target="_blank" rel="noreferrer">{a.label??a.kind}</a>:a.label??a.kind} <small>{time(a.verifiedAt)}</small></p>)}</section></div>}</main>;
+const time = (s: string | null | undefined) =>
+  s
+    ? new Date(s).toLocaleString("ko-KR", {
+        dateStyle: "short",
+        timeStyle: "short",
+      })
+    : "확인 불가";
+export default function OfficeDashboard() {
+  const [auth, setAuth] = useState<"loading" | "out" | "owner">("loading");
+  const [snapshot, setSnapshot] = useState<SnapshotV1 | null>(null);
+  const [stale, setStale] = useState(false);
+  const [project, setProject] = useState("");
+  const [provider, setProvider] = useState("");
+  const [selected, setSelected] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(20);
+  const {
+    projects,
+    runs,
+    projectsError,
+    runsError,
+    projectsChecked,
+    runsChecked,
+  } = usePublicEvidence(project);
+  const generation = useRef(0);
+  const active = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const guard = generation;
+    let live = true;
+    fetch("/api/auth/session", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((x) => {
+        if (live) setAuth(x.authenticated && x.owner ? "owner" : "out");
+      })
+      .catch(() => {
+        if (live) setAuth("out");
+      });
+    return () => {
+      live = false;
+      guard.current++;
+      active.current?.abort();
+    };
+  }, []);
+  const refresh = useCallback(async () => {
+    const id = ++generation.current;
+    active.current?.abort();
+    const controller = new AbortController();
+    active.current = controller;
+    try {
+      const data = await fetchOfficeSnapshot(controller.signal);
+      if (id === generation.current) {
+        setSnapshot(data);
+        setStale(false);
+      }
+    } catch (error) {
+      if (id !== generation.current || controller.signal.aborted) return;
+      if (
+        error instanceof OfficeFetchError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        setSnapshot(null);
+        setAuth("out");
+        setSelected(null);
+      } else setStale(true);
+    }
+  }, []);
+  useEffect(() => {
+    if (auth !== "owner") return;
+    const guard = generation;
+    const first = setTimeout(refresh, 0);
+    const t = setInterval(refresh, 30000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(t);
+      guard.current++;
+      active.current?.abort();
+    };
+  }, [auth, project, refresh]);
+  const logout = async () => {
+    generation.current++;
+    active.current?.abort();
+    setSnapshot(null);
+    setSelected(null);
+    setAuth("out");
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  };
+  const agent = snapshot?.agents.find((a) => a.id === selected);
+  const filtered =
+    snapshot?.agents
+      .filter(
+        (a) =>
+          (!project || a.projectId === project) &&
+          (!provider || a.provider === provider),
+      )
+      .sort((a, b) => {
+        const timestamp = (item: typeof a) =>
+          Date.parse(item.lastActivityAt ?? item.lastSeenAt ?? "1970-01-01");
+        const rank = (item: typeof a) =>
+          snapshot &&
+          Date.parse(snapshot.observedAt) - timestamp(item) < 86400000 &&
+          item.currentTaskId &&
+          snapshot.tasks.some((t) => t.id === item.currentTaskId && t.title)
+            ? 1
+            : 0;
+        return rank(b) - rank(a) || timestamp(b) - timestamp(a);
+      }) ?? [];
+  const tasks =
+    snapshot?.tasks.filter((t) => !project || t.projectId === project) ?? [];
+  return (
+    <main>
+      <header className="top">
+        <span className="brand">
+          <span>✳</span> ASKI <b>office</b>
+        </span>
+        <nav>
+          <a href="https://aski-hub.vercel.app">Aski hub</a>
+          {auth === "owner" ? (
+            <button onClick={logout}>로그아웃</button>
+          ) : (
+            <a className="login" href="/api/auth/github">
+              GitHub 로그인
+            </a>
+          )}
+        </nav>
+      </header>
+      <div className="shell">
+        {auth !== "owner" && (
+          <>
+            <section className="intro">
+              <div>
+                <p className="eyebrow">ASKI의 작업 공간</p>
+                <h1>
+                  일의 흐름을
+                  <br />
+                  <em>한눈에.</em>
+                </h1>
+                <p>역할과 실제 업무 기록을 함께 살펴보세요.</p>
+              </div>
+              <div className="intro-note">
+                <strong>읽기 전용 업무 명부</strong>
+                <p>
+                  역할은 팀의 구성입니다. 실제 활동은 확인된 기록으로
+                  표시합니다.
+                </p>
+              </div>
+            </section>
+            <section className="roles">
+              <div className="section-head">
+                <div>
+                  <p className="eyebrow">팀의 역할</p>
+                  <h2>여섯 가지 관점</h2>
+                </div>
+                <p>역할 이름과 제공자·모델은 별개입니다.</p>
+              </div>
+              <div className="role-strip">
+                {ROLES.map((r) => (
+                  <div className="role" key={r}>
+                    <Avatar role={r} />
+                    <strong>{roles[r][0]}</strong>
+                    <span>{roles[r][1]}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
+        )}
+        {auth !== "owner" ? (
+          <section className="signin">
+            <div>
+              <p className="eyebrow">비공개 업무</p>
+              <h2>
+                {auth === "loading"
+                  ? "접근 권한 확인 중"
+                  : "내 팀의 업무를 확인하세요"}
+              </h2>
+              <p>
+                소유자로 로그인하면 실제 에이전트와 작업 기록을 볼 수 있습니다.
+              </p>
+            </div>
+            {auth !== "loading" && (
+              <a className="primary" href="/api/auth/github">
+                GitHub로 로그인
+              </a>
+            )}
+          </section>
+        ) : (
+          <>
+            <section className="workspace">
+              <div className="section-head">
+                <div>
+                  <p className="eyebrow">
+                    마지막 확인 기록 · {time(snapshot?.observedAt)}
+                  </p>
+                  <h2>작업 현황</h2>
+                </div>
+                <p>마지막 관측 상태이며 현재 실행을 보장하지 않습니다.</p>
+              </div>
+              <div className="overview">
+                <span>
+                  전체 작업 <strong>{snapshot?.tasks.length ?? "—"}</strong>
+                </span>
+                <span>
+                  작업 기록{" "}
+                  <strong>
+                    {snapshot?.tasks.filter((t) => t.status === "working")
+                      .length ?? "—"}
+                  </strong>
+                </span>
+                <span>
+                  검증{" "}
+                  <strong>
+                    {snapshot?.tasks.filter((t) => t.status === "qa").length ??
+                      "—"}
+                  </strong>
+                </span>
+                <span>
+                  확인 필요{" "}
+                  <strong>
+                    {snapshot?.tasks.filter((t) => t.status === "blocked")
+                      .length ?? "—"}
+                  </strong>
+                </span>
+              </div>
+              <div className="filters">
+                <label>
+                  프로젝트{" "}
+                  <select
+                    value={project}
+                    onChange={(e) => {
+                      generation.current++;
+                      active.current?.abort();
+                      setProject(e.target.value);
+                      setVisibleCount(20);
+                      setSelected(null);
+                    }}
+                  >
+                    <option value="">전체 프로젝트</option>
+                    {Array.from(
+                      new Set(
+                        [
+                          ...(snapshot?.agents.map((a) => a.projectId) ?? []),
+                          ...(snapshot?.tasks.map((t) => t.projectId) ?? []),
+                          ...projects.map((p) => p.name),
+                        ].filter((x): x is string => !!x),
+                      ),
+                    ).map((p) => (
+                      <option key={p}>{p}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  제공자{" "}
+                  <select
+                    value={provider}
+                    onChange={(e) => {
+                      setProvider(e.target.value);
+                      setVisibleCount(20);
+                    }}
+                  >
+                    <option value="">전체 제공자</option>
+                    {Array.from(
+                      new Set(
+                        (snapshot?.agents ?? [])
+                          .map((a) => a.provider)
+                          .filter((x): x is string => !!x),
+                      ),
+                    ).map((p) => (
+                      <option key={p}>{p}</option>
+                    ))}
+                  </select>
+                </label>
+                <span>기준 시각 {time(snapshot?.observedAt)}</span>
+              </div>
+              {stale && (
+                <p className="warning" role="status">
+                  새 기록을 불러오지 못했습니다.{" "}
+                  {snapshot
+                    ? "마지막으로 확인된 기록을 표시합니다."
+                    : "연결을 확인한 후 다시 시도합니다."}
+                </p>
+              )}
+              <div className="roster">
+                <div className="roster-heading">
+                  <span>에이전트 / 역할</span>
+                  <span>제공자 / 모델</span>
+                  <span>마지막 업무</span>
+                  <span>상태</span>
+                </div>
+                {filtered.length ? (
+                  filtered.slice(0, visibleCount).map((a) => (
+                    <button
+                      className="roster-row"
+                      key={a.id}
+                      onClick={() => setSelected(a.id)}
+                    >
+                      <span className="person">
+                        {a.roleId ? (
+                          <Avatar role={a.roleId} />
+                        ) : (
+                          <span className="unknown">?</span>
+                        )}
+                        <span>
+                          <strong>{a.name ?? "이름 확인 불가"}</strong>
+                          <small>
+                            {a.roleId ? roles[a.roleId][0] : "역할 확인 불가"} ·{" "}
+                            {a.projectId ?? "프로젝트 확인 불가"}
+                          </small>
+                          <small>
+                            작업:{" "}
+                            {a.currentTaskId
+                              ? (snapshot?.tasks.find(
+                                  (t) => t.id === a.currentTaskId,
+                                )?.title ?? "등록된 제목 없음")
+                              : "확인 불가"}
+                          </small>
+                        </span>
+                      </span>
+                      <span>
+                        {a.provider ?? "제공자 확인 불가"}
+                        <small>{a.model ?? "모델 확인 불가"}</small>
+                      </span>
+                      <span>{time(a.lastActivityAt)}</span>
+                      <span className="status">
+                        {
+                          {
+                            working: "작업 시작 기록",
+                            completed: "완료 기록",
+                            blocked: "차단됨",
+                            idle: "대기 기록",
+                            unknown: "확인 불가",
+                          }[a.status]
+                        }
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <div className="empty">
+                    {snapshot
+                      ? "조건에 맞는 에이전트 기록이 없습니다."
+                      : "업무 기록을 기다리고 있습니다."}
+                  </div>
+                )}
+              </div>
+              {visibleCount < filtered.length && (
+                <button
+                  className="more"
+                  onClick={() => setVisibleCount((n) => n + 20)}
+                >
+                  더 보기 ({visibleCount} / {filtered.length})
+                </button>
+              )}
+              <h3 className="task-title">
+                작업 <span>{tasks.length}</span>
+              </h3>
+              <div className="task-list">
+                {tasks.length ? (
+                  tasks.map((t) => (
+                    <div key={t.id}>
+                      <strong>
+                        {t.title ?? "제목 확인 불가"}
+                        <small>
+                          담당:{" "}
+                          {t.assigneeIds.length
+                            ? t.assigneeIds
+                                .map(
+                                  (id) =>
+                                    snapshot?.agents.find((a) => a.id === id)
+                                      ?.name ?? id,
+                                )
+                                .join(", ")
+                            : "확인 불가"}
+                        </small>
+                      </strong>
+                      <span>
+                        {t.status === "qa"
+                          ? "검증 중"
+                          : t.status === "done"
+                            ? "완료"
+                            : t.status}{" "}
+                        · {time(t.updatedAt)}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">확인된 작업이 없습니다.</p>
+                )}
+              </div>
+            </section>
+            <SourceCoverageView coverage={snapshot?.coverage ?? []} />
+          </>
+        )}
+        <section className="public">
+          <div className="section-head">
+            <div>
+              <p className="eyebrow">공개 자료</p>
+              <h2>GitHub 프로젝트</h2>
+            </div>
+            <p>공개 저장소에서 가져온 별도의 기록입니다.</p>
+          </div>
+          {projectsError && (
+            <p className="warning">
+              GitHub 프로젝트 갱신 실패 또는 요청 제한. 마지막 정상 기록을
+              표시합니다.
+            </p>
+          )}
+          <p className="muted">프로젝트 마지막 확인 {time(projectsChecked)}</p>
+          <div className="public-list">
+            {projects.map((p) => (
+              <a key={p.name} href={p.htmlUrl} target="_blank" rel="noreferrer">
+                <strong>{p.fullName}</strong>
+                <span>업데이트 {time(p.updatedAt)}</span>
+              </a>
+            ))}
+          </div>
+          {project && (
+            <div className="task-list">
+              <h3>{project} 공개 작업</h3>
+              {runsError && (
+                <p className="warning">
+                  GitHub 작업 갱신 실패 또는 요청 제한. 마지막 정상 기록을
+                  표시합니다.
+                </p>
+              )}
+              <p className="muted">마지막 확인 {time(runsChecked)}</p>
+              {runs.map((r) => (
+                <div key={r.id}>
+                  <a href={r.url} target="_blank" rel="noreferrer">
+                    {r.title}
+                  </a>
+                  <span>
+                    {r.status} · {time(r.updatedAt)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+      {agent && snapshot && (
+        <AgentDetail
+          agent={agent}
+          snapshot={snapshot}
+          onClose={() => setSelected(null)}
+        />
+      )}
+    </main>
+  );
 }
