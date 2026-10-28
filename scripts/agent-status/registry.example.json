@@ -1,0 +1,10 @@
+{
+  "identitySalt": "REPLACE_WITH_RANDOM_PRIVATE_32_BYTE_VALUE",
+  "sources": {
+    "pgx-relay": {"boardFile": "/home/aski/agent-shared/board.json"},
+    "pgx-codex": {"roots": ["/home/aski/.codex/sessions"], "maxFiles": 32},
+    "pgx-claude": {"roots": ["/home/aski/.claude/projects"], "maxFiles": 32},
+    "windows-codex": {"roots": ["C:/Users/aski/.codex/sessions"], "maxFiles": 32}
+  },
+  "sessions": {}, "agentPaths": {}, "boardAgents": {}, "tasks": []
+}
