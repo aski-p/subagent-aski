@@ -97,6 +97,7 @@ async function pageFor(
   width,
   owner = true,
   responder = () => ({ status: 200, body: sample }),
+  projectFailure = false,
 ) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   page.on("pageerror", (e) => console.error("PAGE ERROR", e));
@@ -104,18 +105,22 @@ async function pageFor(
     r.fulfill({ json: { authenticated: owner, owner } }),
   );
   await page.route("**/api/projects", (r) =>
-    r.fulfill({
-      json: {
-        projects: [
-          {
-            name: "alpha",
-            fullName: "aski-p/alpha",
-            htmlUrl: "https://github.com/aski-p/alpha",
-            updatedAt: now,
+    r.fulfill(
+      projectFailure
+        ? { status: 503, json: { error: "unavailable" } }
+        : {
+            json: {
+              projects: [
+                {
+                  name: "alpha",
+                  fullName: "aski-p/alpha",
+                  htmlUrl: "https://github.com/aski-p/alpha",
+                  updatedAt: now,
+                },
+              ],
+            },
           },
-        ],
-      },
-    }),
+    ),
   );
   await page.route("**/api/projects/*/runs", (r) =>
     r.fulfill({ json: { runs: [] } }),
@@ -371,6 +376,118 @@ try {
     );
     await denied.close();
   }
+  // Private-only project cannot become public evidence, or survive auth loss.
+  for (const mode of ["logout", 401, 403]) {
+    const privateLabel = "private-only-project-label";
+    const data = {
+      ...sample,
+      agents: [{ ...sample.agents[0], projectId: privateLabel }],
+      tasks: [],
+    };
+    let deny = false;
+    const page = await pageFor(390, true, () => ({
+      status: deny && mode !== "logout" ? mode : 200,
+      body: data,
+    }));
+    await page.getByText("Synthetic Alpha", { exact: true }).waitFor();
+    let privateRequests = 0;
+    await page.route("**/api/projects/private-only-project-label/runs", (r) => {
+      privateRequests++;
+      return r.fulfill({ status: 404 });
+    });
+    await page.getByLabel("프로젝트").selectOption(privateLabel);
+    await page.waitForTimeout(150);
+    assert.equal(privateRequests, 0);
+    assert.equal(
+      await page
+        .getByRole("heading", { name: privateLabel + " 공개 작업" })
+        .count(),
+      0,
+    );
+    if (mode === "logout")
+      await page.getByRole("button", { name: "로그아웃" }).click();
+    else {
+      deny = true;
+      await page.clock.fastForward(30000);
+    }
+    await page.getByText("내 팀의 업무를 확인하세요").waitFor();
+    assert.equal(
+      await page.getByText(privateLabel, { exact: false }).count(),
+      0,
+    );
+    assert.equal(
+      await page.getByText("Synthetic Alpha", { exact: true }).count(),
+      0,
+    );
+    await page.close();
+  }
+  // A delayed public response cannot restore the selected heading after logout.
+  const delayed = await pageFor(390);
+  await delayed.getByText("Synthetic Alpha", { exact: true }).waitFor();
+  let finishPublic;
+  const pendingPublic = new Promise((r) => (finishPublic = r));
+  await delayed.unroute("**/api/projects/alpha/runs");
+  await delayed.route("**/api/projects/alpha/runs", async (r) => {
+    await pendingPublic;
+    await r
+      .fulfill({
+        json: {
+          runs: [
+            {
+              id: 9,
+              title: "Delayed public issue",
+              url: "https://github.com/aski-p/alpha/issues/9",
+              updatedAt: now,
+              status: "qa",
+            },
+          ],
+        },
+      })
+      .catch(() => {});
+  });
+  await delayed.getByLabel("프로젝트").selectOption("alpha");
+  await delayed.waitForTimeout(150);
+  await delayed.getByRole("button", { name: "로그아웃" }).click();
+  finishPublic();
+  await delayed.waitForTimeout(150);
+  assert.equal(await delayed.getByText("alpha 공개 작업").count(), 0);
+  assert.equal(await delayed.getByText("Delayed public issue").count(), 0);
+  await delayed.close();
+  const firstProjectsFailure = await pageFor(390, false, undefined, true);
+  await firstProjectsFailure
+    .getByText("GitHub 프로젝트 갱신 실패 또는 요청 제한.", { exact: false })
+    .waitFor();
+  assert.equal(
+    await firstProjectsFailure
+      .getByText("현재 기록을 불러올 수 없습니다.", { exact: false })
+      .count(),
+    1,
+  );
+  assert.equal(
+    await firstProjectsFailure
+      .getByText("마지막 정상 기록을 표시합니다.", { exact: false })
+      .count(),
+    0,
+  );
+  await firstProjectsFailure.close();
+  // A first run failure has no last-good data to claim.
+  const firstFailure = await pageFor(390);
+  await firstFailure.getByText("Synthetic Alpha", { exact: true }).waitFor();
+  await firstFailure.unroute("**/api/projects/alpha/runs");
+  await firstFailure.route("**/api/projects/alpha/runs", (r) =>
+    r.fulfill({ status: 404 }),
+  );
+  await firstFailure.getByLabel("프로젝트").selectOption("alpha");
+  await firstFailure
+    .getByText("현재 기록을 불러올 수 없습니다.", { exact: false })
+    .waitFor();
+  assert.equal(
+    await firstFailure
+      .getByText("마지막 정상 기록을 표시합니다.", { exact: false })
+      .count(),
+    0,
+  );
+  await firstFailure.close();
   // Old project request completes after new request, and cannot overwrite newer data.
   let release;
   let n = 0;

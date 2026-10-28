@@ -25,6 +25,7 @@ export default function OfficeDashboard() {
   const [visibleCount, setVisibleCount] = useState(20);
   const {
     projects,
+    publicProject,
     runs,
     projectsError,
     runsError,
@@ -50,6 +51,17 @@ export default function OfficeDashboard() {
       active.current?.abort();
     };
   }, []);
+  const clearPrivate = useCallback(() => {
+    generation.current++;
+    active.current?.abort();
+    setSnapshot(null);
+    setSelected(null);
+    setProject("");
+    setProvider("");
+    setVisibleCount(20);
+    setStale(false);
+    setAuth("out");
+  }, []);
   const refresh = useCallback(async () => {
     const id = ++generation.current;
     active.current?.abort();
@@ -67,12 +79,10 @@ export default function OfficeDashboard() {
         error instanceof OfficeFetchError &&
         (error.status === 401 || error.status === 403)
       ) {
-        setSnapshot(null);
-        setAuth("out");
-        setSelected(null);
+        clearPrivate();
       } else setStale(true);
     }
-  }, []);
+  }, [clearPrivate]);
   useEffect(() => {
     if (auth !== "owner") return;
     const guard = generation;
@@ -86,11 +96,7 @@ export default function OfficeDashboard() {
     };
   }, [auth, project, refresh]);
   const logout = async () => {
-    generation.current++;
-    active.current?.abort();
-    setSnapshot(null);
-    setSelected(null);
-    setAuth("out");
+    clearPrivate();
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
   };
   const agent = snapshot?.agents.find((a) => a.id === selected);
@@ -408,8 +414,10 @@ export default function OfficeDashboard() {
           </div>
           {projectsError && (
             <p className="warning">
-              GitHub 프로젝트 갱신 실패 또는 요청 제한. 마지막 정상 기록을
-              표시합니다.
+              GitHub 프로젝트 갱신 실패 또는 요청 제한.{" "}
+              {projectsChecked
+                ? "마지막 정상 기록을 표시합니다."
+                : "현재 기록을 불러올 수 없습니다."}
             </p>
           )}
           <p className="muted">프로젝트 마지막 확인 {time(projectsChecked)}</p>
@@ -421,13 +429,15 @@ export default function OfficeDashboard() {
               </a>
             ))}
           </div>
-          {project && (
+          {publicProject && (
             <div className="task-list">
-              <h3>{project} 공개 작업</h3>
+              <h3>{publicProject} 공개 작업</h3>
               {runsError && (
                 <p className="warning">
-                  GitHub 작업 갱신 실패 또는 요청 제한. 마지막 정상 기록을
-                  표시합니다.
+                  GitHub 작업 갱신 실패 또는 요청 제한.{" "}
+                  {runsChecked
+                    ? "마지막 정상 기록을 표시합니다."
+                    : "현재 기록을 불러올 수 없습니다."}
                 </p>
               )}
               <p className="muted">마지막 확인 {time(runsChecked)}</p>

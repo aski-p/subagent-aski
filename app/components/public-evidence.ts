@@ -47,15 +47,16 @@ export function usePublicEvidence(project: string) {
       clearInterval(timer);
     };
   }, []);
+  const publicProject = projects.some((p) => p.name === project) ? project : "";
   useEffect(() => {
-    if (!project) return;
+    if (!publicProject) return;
     let live = true;
     let version = 0;
     const refresh = async () => {
       const id = ++version;
       try {
         const r = await fetch(
-          "/api/projects/" + encodeURIComponent(project) + "/runs",
+          "/api/projects/" + encodeURIComponent(publicProject) + "/runs",
           { cache: "no-store" },
         );
         if (!r.ok) throw Error();
@@ -64,7 +65,7 @@ export function usePublicEvidence(project: string) {
         if (live && id === version)
           setEntries((e) => ({
             ...e,
-            [project]: {
+            [publicProject]: {
               runs: d.runs,
               error: false,
               checked: new Date().toISOString(),
@@ -74,9 +75,9 @@ export function usePublicEvidence(project: string) {
         if (live && id === version)
           setEntries((e) => ({
             ...e,
-            [project]: {
-              runs: e[project]?.runs ?? [],
-              checked: e[project]?.checked ?? null,
+            [publicProject]: {
+              runs: e[publicProject]?.runs ?? [],
+              checked: e[publicProject]?.checked ?? null,
               error: true,
             },
           }));
@@ -90,13 +91,14 @@ export function usePublicEvidence(project: string) {
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [project]);
+  }, [publicProject]);
   return {
     projects,
+    publicProject,
     projectsError,
     projectsChecked,
-    runs: entries[project]?.runs ?? [],
-    runsError: entries[project]?.error ?? false,
-    runsChecked: entries[project]?.checked ?? null,
+    runs: entries[publicProject]?.runs ?? [],
+    runsError: entries[publicProject]?.error ?? false,
+    runsChecked: entries[publicProject]?.checked ?? null,
   };
 }
