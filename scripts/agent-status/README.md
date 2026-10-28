@@ -47,7 +47,7 @@ Codex projection: session IDs / parent-thread relation / exact agent path for re
 
 Claude actual schema was inspected by keys only: top-level `sessionId`, `parentUuid`, `isSidechain`, `type`, `timestamp`, optional `agentId`; assistant `message.model` provides observed model identity. Contents are ignored. `parentUuid` is a record link and is never presented as a parent session. User/assistant activity does not imply running/completed. Unsupported structures retain unknown coverage.
 
-Relay/shared board uses only its local `status[registeredWho].at` timestamp plus approved registry labels. Arbitrary `text`, `progress.text`, done titles, claims and free-form summaries are never copied. It does not fetch `/api/state` or need Relay credentials.
+Relay/shared board uses only its local `status[registeredWho].at` timestamp plus approved registry labels. If that board explicitly writes Korean local times without an offset, set `sources.pgx-relay.naiveTimeZone` to `Asia/Seoul` (as in the example). Only this configured board source accepts the strict naive format `YYYY-MM-DD HH:mm` and converts it to UTC using Python zoneinfo. Without the option, naive values remain null; aware ISO timestamps retain their own offset behavior. Malformed dates remain null. An invalid/unavailable timezone fails only that source, retaining its last good spool while the other collectors continue; the host timezone is never inferred. Arbitrary `text`, `progress.text`, done titles, claims and free-form summaries are never copied. It does not fetch `/api/state` or need Relay credentials.
 
 ## PGX entrypoints (not installed by this change)
 

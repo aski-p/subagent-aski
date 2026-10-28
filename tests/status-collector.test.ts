@@ -35,3 +35,39 @@ test("nonASCII bearer rejects without killing an actual HTTP adapter process",()
  `],{encoding:"utf8",timeout:10000});
  assert.equal(probe.status,0,probe.stderr+probe.stdout);assert.match(probe.stdout,/malformed401 subsequent200/);
 });
+
+test("board naive timestamps use only an explicit source timezone; malformed config is isolated",()=>{
+ const result=spawnSync("python3",["-c",`
+import contextlib,io,json,sys,tempfile
+from pathlib import Path
+sys.path.insert(0,'scripts/agent-status')
+from collector import collect,run_once,stamp
+with tempfile.TemporaryDirectory() as d:
+ root=Path(d);board=root/'board.json';board.write_text(json.dumps({'status':{'codex':{'at':'2025-02-03 12:34'}}}))
+ reg={'identitySalt':'s'*48,'sources':{'pgx-relay':{'boardFile':str(board)}},'boardAgents':{'codex':{}},'tasks':[]}
+ assert collect('pgx-relay',reg,{})['coverage'][0]['lastActivityAt'] is None
+ reg['sources']['pgx-relay']['naiveTimeZone']='Asia/Seoul'
+ snap=collect('pgx-relay',reg,{})
+ assert snap['coverage'][0]['lastActivityAt']=='2025-02-03T03:34:00Z'
+ assert snap['agents'][0]['lastActivityAt']=='2025-02-03T03:34:00Z'
+ assert stamp('2025-02-03 12:34') is None
+ board.write_text(json.dumps({'status':{'codex':{'at':'malformed date SENTINEL_SECRET'}}}))
+ assert collect('pgx-relay',reg,{})['coverage'][0]['lastActivityAt'] is None
+ board.write_text(json.dumps({'status':{'codex':{'at':'2025-02-03T12:34:00+02:00'}}}))
+ assert collect('pgx-relay',reg,{})['coverage'][0]['lastActivityAt']=='2025-02-03T10:34:00Z'
+ spool=root/'spool';cache=root/'cache.json';registry=root/'registry.json'
+ registry.write_text(json.dumps(reg));run_once(registry,spool,cache,('pgx-relay',));good=(spool/'pgx-relay.json').read_bytes()
+ codex=root/'codex.jsonl';codex.write_text(json.dumps({'type':'session_meta','payload':{'id':'synthetic-codex'}})+chr(10))
+ claude=root/'claude.jsonl';claude.write_text(json.dumps({'type':'assistant','sessionId':'synthetic-claude','message':{'model':'claude-test'}})+chr(10))
+ reg['sources'].update({'pgx-codex':{'files':[str(codex)]},'pgx-claude':{'files':[str(claude)]}})
+ for invalid in ['Invalid/Not_A_Zone',42,'/etc/passwd']:
+  reg['sources']['pgx-relay']['naiveTimeZone']=invalid;registry.write_text(json.dumps(reg));out=io.StringIO()
+  with contextlib.redirect_stdout(out):run_once(registry,spool,cache,('pgx-relay','pgx-codex','pgx-claude'))
+  assert (spool/'pgx-relay.json').read_bytes()==good
+  assert json.loads((spool/'pgx-codex.json').read_text())['agents']
+  assert json.loads((spool/'pgx-claude.json').read_text())['agents']
+  assert out.getvalue().strip()=='pgx-relay: source_unavailable'
+ print('explicit KST UTC conversion; unconfigured/malformed null; invalid timezone isolated: pass')
+ `],{encoding:"utf8"});
+ assert.equal(result.status,0,result.stderr+result.stdout);
+});

@@ -1,6 +1,7 @@
 """Read-only structural metadata projection. No source text is logged or exported."""
 import argparse, datetime as dt, hashlib, hmac, json, os, re, time
 from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 SOURCES=('pgx-relay','pgx-codex','pgx-claude','windows-codex')
 EVENTS={'task_started','task_complete','thread_settings_applied','item_completed'}
 LIMIT=4*1024*1024
@@ -13,6 +14,16 @@ def stamp(v):
   if d.tzinfo is None: return None
   return d.astimezone(dt.timezone.utc).isoformat().replace('+00:00','Z')
  except (ValueError,TypeError): return None
+
+def board_stamp(value,naive_zone):
+ # Only the board source opts into a documented naive format. Never infer host TZ.
+ aware=stamp(value)
+ if aware is not None or naive_zone is None:return aware
+ if not isinstance(value,str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}',value):return None
+ try:
+  parsed=dt.datetime.strptime(value,'%Y-%m-%d %H:%M').replace(tzinfo=naive_zone)
+  return parsed.astimezone(dt.timezone.utc).isoformat().replace('+00:00','Z')
+ except ValueError:return None
 
 def identity(salt,source,raw):
  return hmac.new(salt.encode(),(source+':'+str(raw)).encode(),hashlib.sha256).hexdigest()[:32] if raw else None
@@ -143,6 +154,12 @@ def source_files(config,stats=None):
 def collect(source,reg,cache):
  cfg=reg.get('sources',{}).get(source,{});now=iso();agents=[];events=[];reason=None
  if source=='pgx-relay':
+  naive_zone=None
+  if 'naiveTimeZone' in cfg:
+   try:
+    if not isinstance(cfg['naiveTimeZone'],str):raise ValueError('invalid_board_timezone')
+    naive_zone=ZoneInfo(cfg['naiveTimeZone'])
+   except (ZoneInfoNotFoundError,ValueError,TypeError):raise ValueError('invalid_board_timezone') from None
   path=Path(cfg.get('boardFile','/home/aski/agent-shared/board.json'))
   if path.stat().st_size>LIMIT:raise ValueError('source_unavailable')
   board=json.loads(path.read_text());last=[]
@@ -153,7 +170,7 @@ def collect(source,reg,cache):
    value=statuses.get(who)
    if value is None:continue
    if not isinstance(value,dict):raise ValueError('invalid_board')
-   at=stamp(value.get('at') or value.get('updatedAt'));last.append(at) if at else None
+   at=board_stamp(value.get('at') or value.get('updatedAt'),naive_zone);last.append(at) if at else None
    aid=identity(reg['identitySalt'],source,who)
    agents.append({'id':aid,'name':mapping.get('name'),'roleId':mapping.get('roleId'),'parentId':None,'provider':None,'model':None,'projectId':mapping.get('projectId'),'currentTaskId':mapping.get('taskId'),'status':'unknown','lastActivityAt':at,'lastSeenAt':now,'source':source})
   activity=max(last,default=None)
