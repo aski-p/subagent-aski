@@ -128,7 +128,7 @@ export default function OfficeDashboard() {
           <span>✳</span> ASKI <b>office</b>
         </span>
         <nav>
-          <a href="https://aski-hub.vercel.app">Aski hub</a>
+          <a href="https://askiworld.vercel.app/">Aski hub</a>
           {auth === "owner" ? (
             <button onClick={logout}>로그아웃</button>
           ) : (
