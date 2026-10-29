@@ -329,10 +329,12 @@ try {
       .first()
       .evaluate((row) => {
         const r = row.getBoundingClientRect();
-        return [...row.querySelectorAll("*")].every((e) => {
+        // The atlas image is intentionally larger than its overflow-hidden avatar crop.
+        // Check the crop itself and every visible label/cell, not its hidden pixels.
+        return [...row.querySelectorAll("*")].filter(e => !(e instanceof HTMLImageElement && e.closest(".avatar"))).every((e) => {
           const b = e.getBoundingClientRect();
           return b.left >= r.left - 1 && b.right <= r.right + 1;
-        });
+        }) && [...row.querySelectorAll(".avatar")].every(e => getComputedStyle(e).overflow === "hidden");
       });
     assert.equal(bounds, true, "long label cell clipped");
     await noOverflow(page);
@@ -427,7 +429,7 @@ try {
     );
   });
   await stale.clock.fastForward(30000);
-  await stale.getByRole("status").waitFor();
+  await stale.locator(".workspace").getByRole("status").waitFor();
   assert.equal(
     await stale.getByText("Synthetic Alpha", { exact: true }).count(),
     1,
@@ -443,7 +445,7 @@ try {
     fullPage: true,
   });
   await stale.clock.fastForward(30000);
-  await stale.getByRole("status").waitFor({ state: "hidden" });
+  await stale.locator(".workspace").getByRole("status").waitFor({ state: "hidden" });
   await stale.close();
   for (const code of [401, 403]) {
     let calls = 0;
