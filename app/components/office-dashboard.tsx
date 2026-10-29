@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchOfficeSnapshot, fetchOfficeProgress, OfficeFetchError } from "@/lib/office-browser";
 import { Avatar, roles, agentLabel } from "./role-avatar";
 import { AgentDetail } from "./agent-detail";
+import { BossCommandComposer } from "./boss-command-composer";
 import { SourceCoverageView } from "./source-coverage";
 import { usePublicEvidence } from "./public-evidence";
 import type { SnapshotV1 } from "@/lib/status-contract";
@@ -222,6 +223,7 @@ export default function OfficeDashboard() {
           </section>
         ) : (
           <>
+            <BossCommandComposer projects={progress?.projects ?? []} onAuthFailure={clearPrivate} />
             <section className="workspace">
               <div className="section-head">
                 <div>

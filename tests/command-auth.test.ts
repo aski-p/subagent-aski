@@ -50,3 +50,16 @@ test("429 requires an explicit bounded integer Retry-After before propagation",a
   }
  }finally{globalThis.fetch=old}
 });
+
+test("equivalent pending preserves only a valid receipt identifier",async()=>{
+ config();
+ const old=globalThis.fetch;
+ try{
+  for(const value of ["11111111-1111-4111-8111-111111111111","not-a-uuid"]){
+   globalThis.fetch=async()=>Response.json({error:"equivalent_pending",existingReceiptId:value},{status:409});
+   const response=await POST(request());
+   if(value.startsWith("1111")){assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:"equivalent_pending",existingReceiptId:value})}
+   else {assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:"source_unavailable",outcomeUnknown:true})}
+  }
+ }finally{globalThis.fetch=old}
+});

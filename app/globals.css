@@ -536,3 +536,30 @@ h2 {
     grid-column: 1/-1;
   }
 }
+
+
+.boss-chat { margin: 28px 0 36px; padding: 26px; background: #fff; border: 1px solid #c9ded5; border-radius: 18px; box-shadow: 0 8px 26px rgba(35,59,57,.06); }
+.boss-chat-head { display:flex; align-items:center; gap:14px; }
+.boss-face { width:52px; height:52px; display:grid; place-items:center; flex:none; background:#e2f1e9; border-radius:50%; font-size:27px; }
+.boss-chat-head h2 { margin:0; font-size:21px; }
+.boss-chat-head p { margin:5px 0 0; color:#5f7771; font-size:14px; }
+.boss-refresh { margin-left:auto; border:1px solid #c9ded5; background:white; border-radius:8px; padding:8px 10px; color:#315b50; }
+.boss-history { margin:22px 0 16px; max-height:340px; overflow:auto; background:#f5f9f6; border-radius:12px; padding:16px; }
+.boss-empty { margin:12px 0; color:#607971; }
+.boss-message { background:#fff; border:1px solid #e0ebe4; border-radius:10px; padding:13px 15px; margin-bottom:9px; overflow-wrap:anywhere; }
+.boss-message:last-child { margin-bottom:0; }
+.boss-message-head { display:flex; justify-content:space-between; gap:10px; font-size:14px; }
+.boss-message-head span { color:#53776a; font-size:13px; }
+.boss-answer { white-space:pre-wrap; line-height:1.6; margin:12px 0 0; }
+.boss-reply { margin-top:12px; color:#146c5b; background:#e9f5ef; border:0; border-radius:7px; padding:7px 11px; }
+.boss-compose-meta { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:10px; font-size:13px; color:#526e64; }
+.boss-compose-meta select { margin-left:6px; border:1px solid #c9ded5; border-radius:7px; padding:6px; background:white; max-width:180px; }
+.boss-compose-meta button { border:0; background:transparent; text-decoration:underline; color:#315b50; }
+.boss-compose { display:flex; align-items:stretch; gap:10px; }
+.boss-compose textarea { flex:1; min-width:0; min-height:94px; resize:vertical; font:inherit; line-height:1.5; border:1px solid #a9c9bb; border-radius:10px; padding:12px; }
+.boss-compose textarea:focus-visible,.boss-chat button:focus-visible,.boss-chat select:focus-visible { outline:3px solid #278879; outline-offset:2px; }
+.boss-send { flex:none; width:60px; height:60px; align-self:end; background:#227f6c; color:white; border:0; border-radius:10px; font-size:30px; }
+.boss-send:disabled { opacity:.5; cursor:not-allowed; }
+.boss-hint { display:flex; justify-content:space-between; gap:10px; color:#647e75; font-size:12px; margin-top:8px; }
+.boss-status { color:#42685b; min-height:1.4em; font-size:13px; margin:9px 0 0; }
+@media(max-width: 480px) { .boss-chat { padding:16px; margin:20px 0 28px; } .boss-chat-head { flex-wrap:wrap; } .boss-refresh { margin-left:66px; } .boss-compose textarea { min-height:100px; } .boss-send { width:52px; height:52px; } }

@@ -29,3 +29,19 @@ For native work, classification atomically binds one run/plan/checkpoints and di
 Observed result registration uses fixed `command-result` -> `Ledger.enqueue_command_result` with current plan version and complete actual current attempt map. `command-result-ack` requires this command's exact current registered result; it cannot adopt legacy/unrelated reports. The separate `office.result-report.v1` report transport remains deferred. Command receipt ACKs never mean completion; actual checkpoints/Boss approval/current result ACK determine handled.
 
 Owner-only replies are deliberately authored summaries. Exact full command echoes and source substrings >=16 codepoints are rejected; ordinary short/common Korean words may appear in an answer (for example 확인 -> 확인했습니다). This is a narrow chat usability rule, not a general information-flow guarantee. Existing runtime identifier/path/credential guards and metadata/list/progress boundaries remain enforced.
+
+### Owner Boss conversation
+
+The authenticated owner dashboard places the conversation before the work filters.
+The composer starts with the current Boss target; selecting a dashboard filter does
+not change it. Enter inserts a newline, and Ctrl/Cmd+Enter sends. A receipt says
+only the state actually returned by the command service; acceptance is not proof
+that Boss received or started the work. Authored query answers and clarification
+requests appear in the history, and an awaiting clarification offers 이어 답변.
+The draft remains in authenticated browser memory and is cleared on logout or
+authorization failure. For an unknown submission outcome the same request can be
+explicitly checked again with the same identifier.
+
+The browser fixture test intercepts synthetic API responses on the real Next page;
+it is not evidence of a deployed endpoint, native Boss work, or model execution.
+Production acceptance of that chain is a separate integration gate.

@@ -25,3 +25,19 @@ Transport rules the evidence must respect:
 Recorded by: `<role>` · Date: `<YYYY-MM-DD HH:MM TZ>` · Source commit: `<sha>`
 
 Help text or a zero exit code alone does not pass this gate.
+
+### Owner Boss conversation
+
+The authenticated owner dashboard places the conversation before the work filters.
+The composer starts with the current Boss target; selecting a dashboard filter does
+not change it. Enter inserts a newline, and Ctrl/Cmd+Enter sends. A receipt says
+only the state actually returned by the command service; acceptance is not proof
+that Boss received or started the work. Authored query answers and clarification
+requests appear in the history, and an awaiting clarification offers 이어 답변.
+The draft remains in authenticated browser memory and is cleared on logout or
+authorization failure. For an unknown submission outcome the same request can be
+explicitly checked again with the same identifier.
+
+The browser fixture test intercepts synthetic API responses on the real Next page;
+it is not evidence of a deployed endpoint, native Boss work, or model execution.
+Production acceptance of that chain is a separate integration gate.

@@ -104,6 +104,7 @@ async function pageFor(
 ) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   page.on("pageerror", (e) => console.error("PAGE ERROR", e));
+  await page.route("**/api/office/commands", (r) => r.fulfill({status:503,json:{error:"commands_disabled"}}));
   await page.route("**/api/auth/session", (r) =>
     r.fulfill({ json: { authenticated: owner, owner } }),
   );
@@ -162,7 +163,7 @@ try {
     publicRunCalls++;
     return r.fulfill({json:{runs:[{id:101,title:"Independent public issue",url:"https://github.com/example/alpha/issues/101",updatedAt:now,status:"qa"}]}});
   });
-  await collision.getByLabel("프로젝트").selectOption("private:alpha");
+  await collision.locator(".filters select").first().selectOption("private:alpha");
   await collision.getByText("GitHub 소스 보기",{exact:true}).waitFor();
   assert.equal(await collision.getByText("GitHub 소스 보기",{exact:true}).getAttribute("href"),"https://github.com/example/private-engine");
   assert.equal(await collision.locator(".roster-row").count(),0,"private id must not borrow legacy agents");
@@ -170,7 +171,7 @@ try {
   assert.equal(await collision.getByText("확인된 작업이 없습니다.",{exact:true}).count(),1);
   assert.equal(publicRunCalls,0,"private selection must not request public runs");
   assert.equal(await collision.getByText("alpha 공개 작업",{exact:false}).count(),0);
-  await collision.getByLabel("프로젝트").selectOption("alpha");
+  await collision.locator(".filters select").first().selectOption("alpha");
   await collision.getByText("Independent public issue",{exact:true}).waitFor();
   assert.ok(publicRunCalls>0,"public collision identity must remain selectable");
   assert.equal(await collision.getByText("Synthetic Alpha",{exact:true}).count(),1);
@@ -180,7 +181,7 @@ try {
   // A catalog-only project remains selectable with no agents or tasks.
   const zero = await pageFor(390,true,()=>({status:200,body:{...sample,agents:[],tasks:[]}}),false,()=>({status:200,body:privateProgress}));
   await zero.getByRole("button",{name:"로그아웃"}).waitFor();
-  await zero.getByLabel("프로젝트").selectOption("private:alpha");
+  await zero.locator(".filters select").first().selectOption("private:alpha");
   await zero.getByText("GitHub 소스 보기",{exact:true}).waitFor();
   assert.equal(await zero.locator(".roster-row").count(),0);
   assert.equal(await zero.getByText("확인된 작업이 없습니다.",{exact:true}).count(),1);
@@ -192,21 +193,21 @@ try {
     let calls=0;
     const deniedProgress=await pageFor(390,true,()=>({status:200,body:sample}),false,()=>({status:++calls<=2?200:status,body:privateProgress}));
     await deniedProgress.getByText("Synthetic Alpha",{exact:true}).waitFor();
-    await deniedProgress.getByLabel("프로젝트").selectOption("private:alpha");
+    await deniedProgress.locator(".filters select").first().selectOption("private:alpha");
     await deniedProgress.getByText("GitHub 소스 보기",{exact:true}).waitFor();
     await deniedProgress.clock.fastForward(30000);
     await deniedProgress.getByText("내 팀의 업무를 확인하세요").waitFor();
     assert.equal(await deniedProgress.getByText("Synthetic private engine",{exact:false}).count(),0);
     assert.equal(await deniedProgress.getByText("GitHub 소스 보기",{exact:true}).count(),0);
     assert.equal(await deniedProgress.getByText("Synthetic Alpha",{exact:true}).count(),0);
-    assert.equal(await deniedProgress.getByLabel("프로젝트").count(),0);
+    assert.equal(await deniedProgress.locator(".filters select").first().count(),0);
     await deniedProgress.close();
   }
 
   // A pending progress response completing after logout cannot restore the catalog.
   const logoutProgress=await pageFor(1440,true,()=>({status:200,body:sample}),false,()=>({status:200,body:privateProgress}));
   await logoutProgress.getByText("Synthetic Alpha",{exact:true}).waitFor();
-  await logoutProgress.getByLabel("프로젝트").selectOption("private:alpha");
+  await logoutProgress.locator(".filters select").first().selectOption("private:alpha");
   await logoutProgress.getByText("GitHub 소스 보기",{exact:true}).waitFor();
   let releaseProgress;
   let markPending;
@@ -226,7 +227,7 @@ try {
   assert.equal(await logoutProgress.getByText("내 팀의 업무를 확인하세요").count(),1);
   assert.equal(await logoutProgress.getByText("Synthetic private engine",{exact:false}).count(),0);
   assert.equal(await logoutProgress.getByText("GitHub 소스 보기",{exact:true}).count(),0);
-  assert.equal(await logoutProgress.getByLabel("프로젝트").count(),0);
+  assert.equal(await logoutProgress.locator(".filters select").first().count(),0);
   await logoutProgress.close();
 
   for (const width of [1440, 390]) {
@@ -384,7 +385,7 @@ try {
           },
     );
   });
-  await pub.getByLabel("프로젝트").selectOption("alpha");
+  await pub.locator(".filters select").first().selectOption("alpha");
   await pub.getByText("Initial issue").waitFor();
   await pub.clock.fastForward(30000);
   await pub
@@ -478,7 +479,7 @@ try {
       privateRequests++;
       return r.fulfill({ status: 404 });
     });
-    await page.getByLabel("프로젝트").selectOption(privateLabel);
+    await page.locator(".filters select").first().selectOption(privateLabel);
     await page.waitForTimeout(150);
     assert.equal(privateRequests, 0);
     assert.equal(
@@ -528,7 +529,7 @@ try {
       })
       .catch(() => {});
   });
-  await delayed.getByLabel("프로젝트").selectOption("alpha");
+  await delayed.locator(".filters select").first().selectOption("alpha");
   await delayed.waitForTimeout(150);
   await delayed.getByRole("button", { name: "로그아웃" }).click();
   finishPublic();
@@ -560,7 +561,7 @@ try {
   await firstFailure.route("**/api/projects/alpha/runs", (r) =>
     r.fulfill({ status: 404 }),
   );
-  await firstFailure.getByLabel("프로젝트").selectOption("alpha");
+  await firstFailure.locator(".filters select").first().selectOption("alpha");
   await firstFailure
     .getByText("현재 기록을 불러올 수 없습니다.", { exact: false })
     .waitFor();
@@ -590,9 +591,9 @@ try {
     return { status: 200, body: sample };
   });
   await race.getByText("Synthetic Alpha", { exact: true }).waitFor();
-  await race.getByLabel("프로젝트").selectOption("alpha");
+  await race.locator(".filters select").first().selectOption("alpha");
   await race.waitForTimeout(100);
-  await race.getByLabel("프로젝트").selectOption("beta");
+  await race.locator(".filters select").first().selectOption("beta");
   await race.getByText("Synthetic Beta", { exact: true }).waitFor();
   release();
   await race.waitForTimeout(200);
@@ -605,7 +606,7 @@ try {
     await pending;
     await r.fulfill({ json: sample }).catch(() => {});
   });
-  await race.getByLabel("프로젝트").selectOption("alpha");
+  await race.locator(".filters select").first().selectOption("alpha");
   await race.waitForTimeout(100);
   await race.getByRole("button", { name: "로그아웃" }).click();
   releaseLogout();
