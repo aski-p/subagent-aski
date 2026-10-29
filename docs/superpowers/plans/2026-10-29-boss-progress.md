@@ -12,12 +12,12 @@
 
 ## Global Constraints
 
-- User choice: “Codex 대화창에서 지시·보고, 웹에서 진행률 확인”. Web remains read-only.
+- Original core choice: “Codex 대화창에서 지시·보고, 웹에서 진행률 확인”. Approved extension now adds owner web commands only under `2026-10-29-boss-web-commands.md`; existing metadata/progress GET and read bearer remain read-only.
 - Roles: Codex Atlas `gpt-6.1-sol` medium, Frame `gpt-6.1-terra`, Sentinel `gpt-6.1-sol`; actual Claude Forge/Scout/Palette. Resolve availability honestly; no silent substitution.
 - Maximum active workers 4, including at most 2 Claude; Boss excluded. One code implementer at a time, fresh review gate before next task.
 - Runtime/config/spool live outside source; directories 0700, private files 0600. Actual private engine names/links never enter public source/config/fixtures.
 - Keep original `subagent-aski` authentication changes untouched. Work only in `subagent-boss`, branch `feat/boss-progress-20261029`, base `52db81b`.
-- Exact original parent UUID binding; never pick latest/name match or copy a child CODEX_THREAD_ID. No new app-server/Funnel administration or public command API.
+- Exact original parent UUID binding; never pick latest/name match or copy a child CODEX_THREAD_ID. No new app-server/Funnel administration. The approved web-command plan adds only its exact owner POST view with separate write authority; no arbitrary public control API.
 - Source text, transcripts, credentials, raw tool output and private filesystem paths never enter status/report projections. Hidden Windows child processes use CREATE_NO_WINDOW.
 - Legacy simulation is not evidence. 100% includes a positive-weight final Boss-approval checkpoint. Queue success is not receipt or approval.
 
@@ -116,3 +116,9 @@ Spec coverage: existing-chat ownership/queue=Tasks 1/5; real roles and caps=Task
 
 
 사용자 추가 표시 지시: 모든 화면·Boss 보고·자동 표에 Atlas(설계), Forge(개발), Frame(UI/UX), Palette(디자인), Scout(조사), Sentinel(검수), Boss(총괄)로 표시한다. 내부 roleId와 실제 provider/model/session identity는 변경하지 않는다.
+
+## Approved extension execution overlay
+Core Task2/private catalog and Korean role labels are DONE; preserve them. Task1 actual queue receipt ACK is observed, but reusable transport code still follows Task1. Remaining core order is1→3→4→5→6; actual Claude Forge resumes only at the user's reserved time and is not replaced. No early Claude launch is implied by these plans. One code implementer at a time, reviewer gate before next.
+Independent lounge L1 pure selector/components may be implemented by actual Frame Terra now without touching dashboard/wire/runtime. Lounge L2 follows real core activity providers; web W1–W3 follow core Tasks3–5. Core Task6, web W4 and lounge L3 share one serial dashboard integration and fresh whole-flow review, not competing writers. Extension plans: `2026-10-29-boss-web-commands.md`, `2026-10-29-boss-agent-lounge.md`. Existing direct-Boss/report architecture and role model choices remain. User approved execution/release; no repeated plan/method/activation question.
+
+Review dispatch clarification for remaining core/extension tasks: implementer commits only its exact task files and reports BASE/HEAD/tests; root dispatches fresh reviewer against BASE..HEAD and gates integration/push/next task. Implementers never spawn their own reviewer. This ordering supersedes older task phrasing that placed fresh review before the reviewable commit; completed work is not repeated.

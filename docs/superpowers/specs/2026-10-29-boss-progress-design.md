@@ -88,3 +88,6 @@ GitHub 연결 조회에서 엔진 저장소 세 개가 private임을 확인했�
 
 
 사용자 추가 표시 지시: 모든 화면·Boss 보고·자동 표에 Atlas(설계), Forge(개발), Frame(UI/UX), Palette(디자인), Scout(조사), Sentinel(검수), Boss(총괄)로 표시한다. 내부 roleId와 실제 provider/model/session identity는 변경하지 않는다.
+
+## 승인된 확장과 현재 우선순위
+사용자가 웹 명령과 검증률 차트·animated lounge 추가 설계를 승인했다. 이 문서의 초기 “웹 명령 제외/웹 read-only” 문구는 과거 core 범위 설명이며, 이제 승인된 `2026-10-29-boss-web-command-design.md`의 제한된 owner command POST만 추가한다. 기존 metadata/progress GET은 읽기 전용이고 read bearer에 쓰기 권한을 주지 않는다. 라운지는 `2026-10-29-boss-agent-lounge-design.md`의 actual activity proof만 따른다. 완료된 catalog/role 작업을 다시 하지 않고 기존 core 계획과 두 확장 계획의 의존 순서로 계속 구현한다.

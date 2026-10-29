@@ -1,6 +1,6 @@
 # 웹 명령 → 기존 Codex Boss 설계 확장
 
-상태: 사용자 승인 대기. 설계 문서만 작성·검토했으며 제품 코드·설치·운영 활성화는 수행하지 않았다.
+상태: 사용자 “추가 설계 승인” 완료. 웹 명령·검증률 차트·animated lounge의 구현, 실제 end-to-end 검증, 승인된 기존 경로 활성화와 Vercel 반영을 진행한다. 이 문서 갱신은 계획 작성이며 제품 코드는 아직 변경하지 않았다.
 
 ## 의도와 기존 작업과의 관계
 사용자는 Agent Office 웹에서도 일을 지시하고, 현재 사용 중인 동일 Codex Boss가 실제 GPT·Claude 작업자에게 나누어 수행하며, 웹에서 검증된 진행률을 보고 원래 Boss에서 보고를 받길 원한다. 기존 Codex 직접 지시는 계속 가능하다. 새 웹 Boss나 대체 제공자를 만들지 않는다.
@@ -97,3 +97,5 @@ active/awaiting_input의 원문은 적법한 expire 또는 terminal까지 보존
 
 ## 독립 builder check 결과
 Codex Sol 6.1 medium의 독립 검토에서 수신 뒤 복구, 웹 확인 질문/답변 연결, uncertain 전송 해소, 기록 정리와 멱등성 보존의 네 질문을 확인했다. root가 정한 기본값과 transaction/resume 계약을 문서에 반영했고 재검토에서 네 질문 모두 해소, 계획 전에 추가 답변이 필요한 중요한 질문/새 중대 결함 없음으로 확인했다. 실제 queue·resume·spawn 동작은 구현 수용검사에서 입증한다. 이 문서 승인은 명시된 구현·검증·기존 경로의 command 활성화·운영 Vercel 반영 범위를 함께 승인하는 것으로 제시한다.
+
+승인 후 구현 계획: `../plans/2026-10-29-boss-web-commands.md`, `../plans/2026-10-29-boss-agent-lounge.md`. 실제 Claude 작업 예약/제공자 대체 금지와 단일 코드 구현자 검토 순서를 유지한다.
