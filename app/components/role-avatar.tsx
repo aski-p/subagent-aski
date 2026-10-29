@@ -26,7 +26,7 @@ export function Avatar({ role }: { role: RoleId }) {
     <span className="avatar" aria-hidden="true">
       {/* Next generates optimized responsive URLs for the atlas. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img alt="" {...getImageProps({ src: art.src, alt: "", width: 384, height: 256, sizes: "240px" }).props}
+      <img {...getImageProps({ src: art.src, alt: "", width: 384, height: 256, sizes: "240px" }).props} alt=""
         style={{ left: art.portraitLeft, top: art.portraitTop }} />
     </span>
   );

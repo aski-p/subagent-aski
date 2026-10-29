@@ -9,7 +9,7 @@ export function LoungeAvatar({ role, mode, paused }: { role: RoleId; mode: Loung
     <div className={`lounge-avatar lounge-avatar--${mode}${paused ? " is-paused" : ""}`} aria-hidden="true">
       <div className={`lounge-robot${working ? " is-working-pose" : ""}`}>
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img alt="" {...getImageProps({ src: roleArt[role].src, alt: "", width: 384, height: 256, sizes: "192px" }).props} />
+        <img {...getImageProps({ src: roleArt[role].src, alt: "", width: 384, height: 256, sizes: "192px" }).props} alt="" />
       </div>
       {mode === "working" && <span className="lounge-sweat">◉</span>}
     </div>
