@@ -1,0 +1,8 @@
+import {createHash,createHmac,timingSafeEqual} from "node:crypto";
+const purpose="office-command-csrf-v1",ttl=900000;
+const digest=(s:string)=>createHash("sha256").update(s).digest("base64url");
+function mac(payload:string,secret:string){if(secret.length<32)throw Error("auth_unconfigured");const key=createHmac("sha256",secret).update(purpose).digest();return createHmac("sha256",key).update(payload).digest("base64url");}
+export function issueCommandCsrf(sessionCookie:string,secret:string,nowMs=Date.now()):{token:string;expiresAt:string}{if(!sessionCookie)throw Error("invalid_auth");const exp=nowMs+ttl,p=Buffer.from(JSON.stringify({purpose,iat:nowMs,exp,session:digest(sessionCookie)})).toString("base64url");return {token:p+"."+mac(p,secret),expiresAt:new Date(exp).toISOString()};}
+export function commandCsrfStatus(token:string,sessionCookie:string,secret:string,nowMs=Date.now()):"valid"|"expired"|"invalid"{try{if(!sessionCookie||token.length>2048||!/^[-\w]+\.[-\w]+$/.test(token))return "invalid";const [p,s]=token.split("."),expected=mac(p,secret);if(s.length!==expected.length||!timingSafeEqual(Buffer.from(s),Buffer.from(expected)))return "invalid";const v=JSON.parse(Buffer.from(p,"base64url").toString());const authentic=Object.keys(v).sort().join(",")==="exp,iat,purpose,session"&&v.purpose===purpose&&Number.isSafeInteger(v.iat)&&Number.isSafeInteger(v.exp)&&v.iat<=nowMs&&v.exp-v.iat===ttl&&v.session===digest(sessionCookie);return authentic?(v.exp>nowMs?"valid":"expired"):"invalid";}catch{return "invalid";}}
+
+export function verifyCommandCsrf(token:string,sessionCookie:string,secret:string,nowMs=Date.now()):boolean{return commandCsrfStatus(token,sessionCookie,secret,nowMs)==="valid"}

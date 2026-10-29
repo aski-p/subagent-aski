@@ -87,3 +87,76 @@ Catalog registration is independent of agent activity and does not broaden GitHu
 `STATUS_PROGRESS_PATH` defaults to `/home/aski/agent-office-status/progress.json`. Missing progress spools yield empty runs/tasks/reports without inferring work from metadata. Malformed progress spools fail with sanitized 503. The adapter validates catalog and progress schemas and caps each input and composed response at 1 MiB. All fields are exact; IDs, field lengths, counts, enums, percentages and timestamps are bounded. The catalog is never derived from spool project rows. Missing/invalid catalog initially yields an empty unavailable catalog; after a validated read it retains that catalog in memory with state stale, including deletion. A valid empty catalog intentionally clears the list. Restart requires the private catalog to recover retained projects.
 
 The browser retains last good private results on non-auth failures. Logout, 401 or 403 invalidates pending request generations and clears catalog, progress, selection and metadata. Keep runtime directories 0700 and private catalog/spools 0600; install runtime/config separately from source.
+
+## Owner command intake (W2)
+
+The existing service path has one exact additional view:
+`/agent-office-status?view=commands`. No public port or listener is added.
+GET uses the existing read bearer; POST uses a separately generated random command
+bearer of at least32 characters. The two bearers must differ from one another,
+JWT_SECRET and GITHUB_CLIENT_SECRET. A known read bearer used for POST returns403;
+a known command bearer used for ANY read view returns403. Unknown/duplicate query
+strings remain404. The original snapshot and progress GET behavior is unchanged.
+
+Vercel configuration:
+- OFFICE_WEB_COMMANDS_ENABLED: only literal `true` enables context/submission; default off.
+- STATUS_ADAPTER_URL: existing bare absolute URL ending `/agent-office-status`,
+  no query/fragment/userinfo; HTTPS or loopback127.0.0.1 HTTP only. Code appends the
+  exact fixed query. Browser values never form this URL.
+- STATUS_ADAPTER_READ_TOKEN: existing read token, at least24 chars for command context.
+- STATUS_ADAPTER_COMMAND_TOKEN: distinct random command bearer, at least32 chars.
+- JWT_SECRET: existing session secret, at least32 chars. CSRF derives a purpose-specific
+  HMAC key from this secret. It uses its own purpose/iat/exp/session-cookie digest
+  payload and15min expiry, and is never accepted as a session/OAuth JWT.
+- AUTH_ALLOWED_ORIGINS: existing exact HTTPS origins; POST requires exact request Origin,
+  rejects Sec-Fetch-Site cross-site, and requires X-Office-CSRF.
+
+PGX service fixed environment (no private path defaults except interpreter):
+- OFFICE_WEB_COMMANDS_ENABLED: default off; literaltrue enables public command view.
+- STATUS_ADAPTER_COMMAND_TOKEN: same transport command token.
+- OFFICE_COMMAND_DB_PATH: absolute existing private W1 SQLite path.
+- OFFICE_COMMAND_CAPABILITY_FILE: absolute protected web-intake capability file.
+- OFFICE_COMMAND_HELPER_PATH: absolute installed office_cli.py path.
+- OFFICE_COMMAND_PYTHON_PATH: absolute interpreter, default /usr/bin/python3.
+- OFFICE_COMMAND_MAINTENANCE_CAPABILITY_FILE: absolute protected boss-dispatch capability
+  file. When all maintenance paths are configured, the SAME adapter performs private
+  command-purge once at listening and everyhour, even if public intake is off.
+  The interval is unref'ed and cleared on server close. This allows7/30day retention
+  to advance while the Windows browser/controller is offline. No read request
+  triggers purge and no public mutator route exists. W3/runtime must configure this
+  field and keep this existing adapter process alive.
+Constructor equivalents are commandToken, commandDbPath, commandCapabilityFile,
+commandHelperPath, commandPythonPath, commandsEnabled, commandMaintenanceCapabilityFile.
+commandTimeoutMs defaults8000 (constructor only, for isolated tests).
+
+The adapter invokes the fixed interpreter/helper as an argv array with fixed db/cap paths:
+`python helper --db db --capability-file cap command-submit|command-list|command-purge`.
+JSON goes through stdin; shell=false, stderr discarded, stdout capped at1MiB, helper
+deadline8s. The helper selects owner/binding/catalog from its protected W1 capability.
+The fixed server-confirmed actor69686315 is transport metadata only and is checked
+before forwarding; it never grants Python authority. Raw command-redeem is never called.
+
+Web API GET /api/office/commands accepts no query; optional X-Office-Cursor is a
+1..200 character base64url opaque cursor forwarded ONLY as the same header.
+It returns CommandContext {schemaVersion,csrfToken,csrfExpiresAt,receipts,nextCursor}.
+POST accepts the strict CommandInput only. It streams at most16KiB actual UTF-8 bytes
+before JSON parsing, rejects unknown fields, NUL/control/unpaired surrogate and more
+than4000 Unicode codepoints. Internal POST sends exactly {actor:69686315,input}.
+Only bounded sanitized receipts cross HTTP, with no raw source/native ID/capability.
+
+HTTP:401 unauthenticated;403 forbidden, csrf_invalid, or csrf_expired;400 invalid_input;
+415 unsupported_media_type;503 commands_disabled;503 source_unavailable. csrf_expired
+is issued only after verifying MAC, purpose, structure and CURRENT session digest:
+W4 may refresh context preserving draft/clientRequestId. Other401/403 must clear private
+client state. New durable commit returns202 {receipt,replayed:false}; exact retry200
+{receipt,replayed:true}.409 conflict/equivalent_pending,410 already_processed and429
+rate_limited are preserved;429 has bounded integer Retry-After. Other submit transport/
+helper/schema failures return503 {error:"source_unavailable",outcomeUnknown:true}.
+W4 must preserve the same frozen input/clientRequestId after unknown outcome and retry
+idempotently; this is never evidence that intake failed. Local unconfigured/off errors
+do not claim an unknown transport outcome. All responses are private,no-store.
+No credential/body/stack output is logged by these paths.
+
+This source change does not install/restart/configure a service, enable production
+writes, or prove deployed HTTPS command operation. Root performs that exact live
+POST proof after the source review gate and W3/W4 integration.
