@@ -35,6 +35,14 @@ CREATE INDEX IF NOT EXISTS commands_equivalence ON commands(owner_id,binding_id,
 CREATE TABLE IF NOT EXISTS command_tombstones (
  owner_id TEXT NOT NULL, client_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
  command_id TEXT NOT NULL, binding_id TEXT NOT NULL, boss_id TEXT NOT NULL, terminal_state TEXT NOT NULL, PRIMARY KEY(owner_id,client_id));
+CREATE TABLE IF NOT EXISTS command_resume_cursors (
+ owner_id TEXT NOT NULL, binding_id TEXT NOT NULL, boss_id TEXT NOT NULL,
+ after_sequence INTEGER NOT NULL, PRIMARY KEY(owner_id,binding_id,boss_id));
+CREATE TABLE IF NOT EXISTS command_result_bindings (
+ sequence INTEGER PRIMARY KEY AUTOINCREMENT, command_id TEXT NOT NULL, run_id TEXT NOT NULL,
+ report_id TEXT NOT NULL, report_revision INTEGER NOT NULL, plan_version INTEGER NOT NULL,
+ attempts_hash TEXT NOT NULL, decision_hash TEXT NOT NULL, execution_hash TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, UNIQUE(report_id,report_revision));
 CREATE TABLE IF NOT EXISTS command_revisions (
  command_id TEXT PRIMARY KEY REFERENCES commands(id), run_id TEXT NOT NULL REFERENCES runs(id),
  plan_version INTEGER NOT NULL, payload_hash TEXT NOT NULL);
@@ -127,6 +135,9 @@ class CommandStore:
             # executescript commits implicitly; individual DDL retains our lock.
             for statement in SCHEMA.split(";"):
                 if statement.strip(): conn.execute(statement)
+            columns={r["name"] for r in conn.execute("PRAGMA table_info(commands)")}
+            if "result_sequence" not in columns:
+                conn.execute("ALTER TABLE commands ADD COLUMN result_sequence INTEGER")
 
     @contextmanager
     def _private_transaction(self):
@@ -376,10 +387,20 @@ class CommandStore:
 
     def resume(self,boss_capability:dict)->list:
         with self._authorized(boss_capability,"boss-redeem") as (_,conn,cap):
+            partition=(cap["owner_id"],cap["binding_id"],cap["boss_id"])
+            previous=conn.execute("""SELECT after_sequence FROM command_resume_cursors
+                 WHERE owner_id=? AND binding_id=? AND boss_id=?""",partition).fetchone()
+            after=previous["after_sequence"] if previous else 0
+            # Persistent round-robin cursor: unfinished first-page work cannot
+            # starve later commands, including after a controller/process restart.
             rows=conn.execute("""SELECT * FROM commands WHERE owner_id=? AND binding_id=? AND boss_id=?
                   AND received_at IS NOT NULL AND state NOT IN ('handled','failed','expired','closed')
-                  ORDER BY sequence LIMIT 51""",(cap["owner_id"],cap["binding_id"],cap["boss_id"])).fetchall()
-            if len(rows)>50: raise ValueError("resume_limit")
+                  ORDER BY CASE WHEN sequence>? THEN 0 ELSE 1 END,sequence LIMIT 50""",
+                  (*partition,after)).fetchall()
+            if rows:
+                conn.execute("""INSERT INTO command_resume_cursors VALUES(?,?,?,?)
+                    ON CONFLICT(owner_id,binding_id,boss_id) DO UPDATE SET after_sequence=excluded.after_sequence""",
+                    (*partition,rows[-1]["sequence"]))
             # Raw payload still requires redeem by ID/hash. No secrets in recovery listing.
             return [{"commandId":r["id"],"payloadHash":r["payload_hash"],"receipt":receipt(r)} for r in rows]
 

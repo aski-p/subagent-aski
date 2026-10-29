@@ -369,7 +369,9 @@ class CommandsTest(unittest.TestCase):
                 with self.store._private_transaction() as conn:
                     conn.execute("UPDATE commands SET state='started',stage='dispatched' WHERE id=?",(r["id"],))
                 report="report-"+order
-                self.boss.enqueue_report({"id":report,"runId":rid,"revision":1})
+                self.boss.start_attempt(tid,{"id":"attempt-"+order,"observedProvider":"codex"})
+                self.boss.enqueue_command_result(r["id"],{"id":report,"runId":rid,"revision":1},
+                                                1,{tid:"attempt-"+order})
                 if order=="ack-first":
                     self.boss.ack_report("synthetic-boss",report,1)
                 else:
@@ -382,5 +384,127 @@ class CommandsTest(unittest.TestCase):
                     # A fresh result ACK after completion is required.
                 self.boss.ack_report("synthetic-boss",report,1)
                 self.assertEqual(state(),"handled")
+
+    def test_resume_fifty_one_received_is_bounded_fair_and_restart_safe(self):
+        expected=set()
+        for i in range(51):
+            sec=i*130  # <=28 per rolling hour; receive immediately releases pending budget.
+            r=self.submit(self.data("outstanding "+str(i)),sec)
+            self.receive(r,sec)
+            expected.add(r["id"])
+        first=self.store.resume(self.caps["boss-redeem"])
+        self.assertEqual(len(first),50)
+        restarted=CommandStore(self.db)
+        second=restarted.resume(self.caps["boss-redeem"])
+        self.assertEqual(len(second),50)
+        self.assertEqual({r["commandId"] for r in first+second},expected)
+        self.assertNotEqual(first,second)
+        self.assertNotIn("outstanding",json.dumps(first+second))
+        # Cursor advances even when all returned commands remain nonterminal.
+        third=CommandStore(self.db).resume(self.caps["boss-redeem"])
+        self.assertNotEqual(second,third)
+
+    def command_execution_fixture(self,name,run_id=None,sec=0):
+        r=self.submit(self.data(name,project="catalog-project"),sec);self.receive(r,sec)
+        rid=run_id or "result-run-"+name;tid="result-task-"+name
+        if run_id is None:
+            self.decision(r,"new_task",sec+2,
+                run={"id":rid,"bossId":"synthetic-boss","projectId":"catalog-project","planVersion":1},
+                tasks=[{"id":tid,"provider":"codex"}],
+                checkpoints=[{"id":"result-final-"+name,"taskId":tid,"weight":1,"bossOnly":True}])
+            self.boss.start_attempt(tid,{"id":"result-attempt-"+name,"observedProvider":"codex"})
+        else:
+            self.decision(r,"revise_run",sec+2,runId=rid)
+        with self.store._private_transaction() as conn:
+            conn.execute("UPDATE commands SET state='started',stage='dispatched' WHERE id=?",(r["id"],))
+        return r,rid,tid
+
+    def state_for(self,command_id):
+        return next(x["state"] for x in self.store.receipts("owner",None)["receipts"] if x["id"]==command_id)
+
+    def test_unrelated_legacy_ack_cannot_complete_newer_command_on_same_run(self):
+        old,rid,tid=self.command_execution_fixture("old")
+        self.boss.enqueue_report({"id":"legacy-result","runId":rid,"revision":1})
+        self.boss.approve_run("synthetic-boss",rid,1)
+        newer,_,_=self.command_execution_fixture("newer",run_id=rid,sec=4)
+        self.boss.ack_report("synthetic-boss","legacy-result",1)
+        self.assertEqual(self.state_for(old["id"]),"started")
+        self.assertEqual(self.state_for(newer["id"]),"started")
+
+    def test_result_binding_exact_command_current_attempt_plan_and_fresh_result(self):
+        r,rid,tid=self.command_execution_fixture("bound")
+        current={tid:"result-attempt-bound"}
+        self.boss.enqueue_report({"id":"unrelated","runId":rid,"revision":1})
+        # Legacy/unrelated reports cannot be retroactively promoted to a command result.
+        with self.assertRaises(ValueError):
+            self.boss.enqueue_command_result(r["id"],{"id":"unrelated","runId":rid,"revision":1},1,current)
+        self.boss.enqueue_command_result(r["id"],{"id":"bound-result","runId":rid,"revision":1},1,current)
+        # Exact submission retry is safe.
+        self.boss.enqueue_command_result(r["id"],{"id":"bound-result","runId":rid,"revision":1},1,current)
+        self.boss.start_attempt(tid,{"id":"result-attempt-new","observedProvider":"codex"})
+        self.boss.approve_run("synthetic-boss",rid,1)
+        self.boss.ack_report("synthetic-boss","bound-result",1)
+        self.assertEqual(self.state_for(r["id"]),"started")
+        # W3 later plan replacement must also invalidate a captured result.
+        self.boss.enqueue_command_result(r["id"],{"id":"plan-result","runId":rid,"revision":1},
+                                        1,{tid:"result-attempt-new"})
+        with self.store._private_transaction() as conn:
+            conn.execute("UPDATE runs SET plan_version=2 WHERE id=?",(rid,))
+        self.boss.ack_report("synthetic-boss","plan-result",1)
+        self.assertEqual(self.state_for(r["id"]),"started")
+        with self.assertRaises(ValueError):
+            self.boss.enqueue_command_result(r["id"],{"id":"wrong-plan","runId":rid,"revision":1},
+                                            1,{tid:"result-attempt-new"})
+        self.boss.enqueue_command_result(r["id"],{"id":"fresh-result","runId":rid,"revision":1},
+                                        2,{tid:"result-attempt-new"})
+        newer,_,_=self.command_execution_fixture("new-command",run_id=rid,sec=4)
+        self.boss.ack_report("synthetic-boss","fresh-result",1)
+        self.assertEqual(self.state_for(r["id"]),"handled")
+        self.assertEqual(self.state_for(newer["id"]),"started")
+        with self.assertRaises(ValueError):
+            self.boss.enqueue_command_result(newer["id"],{"id":"fresh-result","runId":rid,"revision":1},
+                                            2,{tid:"result-attempt-new"})
+        self.boss.enqueue_command_result(newer["id"],{"id":"new-command-result","runId":rid,"revision":1},
+                                        2,{tid:"result-attempt-new"})
+        self.boss.ack_report("synthetic-boss","new-command-result",1)
+        self.assertEqual(self.state_for(newer["id"]),"handled")
+        with self.assertRaises(PermissionError):
+            Ledger(self.db,self.caps["boss-dispatch"]["capabilityFile"]).enqueue_command_result(
+                newer["id"],{"id":"forged","runId":rid,"revision":1},2,{tid:"result-attempt-new"})
+
+    def test_existing_w1_database_migrates_without_granting_legacy_completion(self):
+        r,rid,tid=self.command_execution_fixture("migration")
+        self.boss.enqueue_report({"id":"pre-migration-report","runId":rid,"revision":1})
+        # Reconstruct the relevant pre-Fix1 private schema.
+        with self.store._private_transaction() as conn:
+            conn.execute("DROP TABLE command_result_bindings")
+            conn.execute("DROP TABLE command_resume_cursors")
+            conn.execute("ALTER TABLE commands DROP COLUMN result_sequence")
+        self.boss.approve_run("synthetic-boss",rid,1)
+        self.boss.ack_report("synthetic-boss","pre-migration-report",1)
+        self.assertEqual(self.state_for(r["id"]),"started")
+        upgraded=CommandStore(self.db)
+        recovered=upgraded.resume(self.caps["boss-redeem"])
+        self.assertEqual(recovered[0]["commandId"],r["id"])
+        self.boss.enqueue_command_result(r["id"],{"id":"post-migration-report","runId":rid,"revision":1},
+                                        1,{tid:"result-attempt-migration"})
+        self.boss.ack_report("synthetic-boss","post-migration-report",1)
+        self.assertEqual(self.state_for(r["id"]),"handled")
+
+    def test_result_registration_current_attempt_validation_and_outer_rollback(self):
+        r,rid,tid=self.command_execution_fixture("rollback-result")
+        report={"id":"atomic-result","runId":rid,"revision":1}
+        with self.assertRaises(ValueError):
+            self.boss.enqueue_command_result(r["id"],report,1,{tid:"wrong-attempt"})
+        with self.assertRaises(RuntimeError):
+            with self.boss.transaction():
+                self.boss.enqueue_command_result(r["id"],report,1,{tid:"result-attempt-rollback-result"})
+                raise RuntimeError("synthetic rollback")
+        with self.boss.transaction() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM reports WHERE id='atomic-result'").fetchone())
+            self.assertIsNone(conn.execute("SELECT 1 FROM command_result_bindings WHERE report_id='atomic-result'").fetchone())
+            self.assertIsNone(conn.execute("SELECT result_sequence FROM commands WHERE id=?",(r["id"],)).fetchone()[0])
+        self.boss.enqueue_command_result(r["id"],report,1,{tid:"result-attempt-rollback-result"})
+        self.assertEqual(self.state_for(r["id"]),"started")
 
 if __name__=="__main__": unittest.main()

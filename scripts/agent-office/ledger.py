@@ -483,6 +483,91 @@ class Ledger:
             self._audit(conn,"enqueue_report",report)
             return {"id":rid,"revision":rev}
 
+    @staticmethod
+    def _command_execution_snapshot(conn, command):
+        run=conn.execute("SELECT * FROM runs WHERE id=?",(command["run_id"],)).fetchone()
+        if run is None: raise ValueError("unknown_run")
+        attempts={r["id"]:r["current_attempt"] for r in conn.execute(
+            "SELECT id,current_attempt FROM tasks WHERE run_id=? ORDER BY id",(run["id"],))}
+        if not attempts or any(value is None for value in attempts.values()):
+            raise ValueError("registered_execution_required")
+        execution_hash=digest(canonical({"commandId":command["id"],"decision":command["decision_hash"],
+                                        "planVersion":run["plan_version"],"attempts":attempts}))
+        return run,attempts,execution_hash
+
+    def enqueue_command_result(self, command_id:str, report:dict, plan_version:int, attempt_ids:dict)->dict:
+        """Original Boss only: register a newly created current-execution result.
+
+        W3 must observe actual dispatch before setting started/dispatched, then call
+        this method with the exact registered current task->attempt map. Existing
+        legacy reports cannot be promoted into command results after the fact.
+        """
+        from commands import command_row, exact
+        exact(report,("id","runId","revision"),("status",))
+        with self.transaction() as conn:
+            cap=self._authorize(conn,{"boss"})
+            command=command_row(conn,command_id)
+            if command["boss_id"]!=cap["boss_id"]: raise PermissionError("wrong_boss")
+            if command["decision"] not in {"new_task","revise_run"} or command["received_at"] is None:
+                raise ValueError("command_execution_required")
+            run,actual,execution_hash=self._command_execution_snapshot(conn,command)
+            if version(plan_version)!=run["plan_version"] or not isinstance(attempt_ids,dict) or attempt_ids!=actual:
+                raise ValueError("stale_execution")
+            if report["runId"]!=run["id"]: raise PermissionError("wrong_run")
+            report_id=key(report["id"]);revision=version(report["revision"])
+            fingerprint=digest(canonical(report))
+            existing=conn.execute("""SELECT * FROM command_result_bindings
+                                    WHERE report_id=? AND report_revision=?""",(report_id,revision)).fetchone()
+            if existing:
+                if (existing["command_id"]!=command_id or existing["execution_hash"]!=execution_hash
+                    or existing["payload_hash"]!=fingerprint or command["result_sequence"]!=existing["sequence"]):
+                    raise ValueError("command_result_conflict")
+                return {"registered":True}
+            if command["state"]!="started" or command["stage"]!="dispatched":
+                raise ValueError("native_dispatch_required")
+            old=conn.execute("SELECT revision FROM reports WHERE id=?",(report_id,)).fetchone()
+            if old and revision<=old["revision"]:
+                raise ValueError("existing_report_not_command_result")
+            # Nested core validation/insertion and binding share the outer transaction.
+            self.enqueue_report(report)
+            bound=conn.execute("""INSERT INTO command_result_bindings
+                (command_id,run_id,report_id,report_revision,plan_version,attempts_hash,
+                 decision_hash,execution_hash,payload_hash) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (command_id,run["id"],report_id,revision,plan_version,digest(canonical(actual)),
+                 command["decision_hash"],execution_hash,fingerprint))
+            conn.execute("UPDATE commands SET result_sequence=? WHERE id=?",(bound.lastrowid,command_id))
+            self._audit(conn,"enqueue_command_result",{"commandId":command_id,"report":report,
+                                                        "executionHash":execution_hash})
+            return {"registered":True}
+
+    def _complete_command_result(self, conn, report):
+        # Old W1 databases or legacy reports fail closed until result registration.
+        if not conn.execute("""SELECT 1 FROM sqlite_master WHERE type='table'
+                             AND name='command_result_bindings'""").fetchone():
+            return
+        binding=conn.execute("""SELECT b.* FROM command_result_bindings b JOIN commands c
+            ON c.id=b.command_id AND c.result_sequence=b.sequence
+            WHERE b.report_id=? AND b.report_revision=? AND c.run_id=b.run_id
+            AND c.state='started' AND c.stage='dispatched'""",
+            (report["id"],report["revision"])).fetchone()
+        if binding is None: return
+        command=conn.execute("SELECT * FROM commands WHERE id=?",(binding["command_id"],)).fetchone()
+        try:
+            run,attempts,execution_hash=self._command_execution_snapshot(conn,command)
+        except ValueError:
+            return
+        if (run["id"]!=report["run_id"] or run["plan_version"]!=binding["plan_version"]
+            or execution_hash!=binding["execution_hash"] or digest(canonical(attempts))!=binding["attempts_hash"]
+            or command["decision_hash"]!=binding["decision_hash"]):
+            return
+        checkpoints=conn.execute("""SELECT c.state FROM checkpoints c JOIN tasks t ON t.id=c.task_id
+                                  WHERE t.run_id=?""",(run["id"],)).fetchall()
+        if checkpoints and all(c["state"]=="accepted" for c in checkpoints):
+            at=timestamp()
+            conn.execute("""UPDATE commands SET state='handled',stage='handled',terminal_at=?,
+                last_handled_at=?,updated_at=? WHERE id=? AND result_sequence=?""",
+                (at,at,at,command["id"],binding["sequence"]))
+
     def ack_report(self,boss_id:str,report_id:str,revision:int)->dict:
         with self.transaction() as conn:
             self._authorize(conn,{"boss"},boss_id=boss_id)
@@ -490,16 +575,7 @@ class Ledger:
             if row is None or row["revision"]!=version(revision): raise ValueError("report_revision_mismatch")
             self._run(conn,row["run_id"])
             conn.execute("UPDATE reports SET status='acknowledged',updated_at=? WHERE id=?",(timestamp(),report_id))
-            # W1 completion is tied to a verified result ACK after core approval.
-            # An earlier report ACK cannot silently finish a later work attempt.
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='commands'").fetchone():
-                checkpoints=conn.execute("""SELECT c.state FROM checkpoints c JOIN tasks t ON t.id=c.task_id
-                                          WHERE t.run_id=?""",(row["run_id"],)).fetchall()
-                if checkpoints and all(c["state"]=="accepted" for c in checkpoints):
-                    at=timestamp()
-                    conn.execute("""UPDATE commands SET state='handled',stage='handled',terminal_at=?,
-                       last_handled_at=?,updated_at=? WHERE run_id=? AND state='started' AND stage='dispatched'""",
-                       (at,at,at,row["run_id"]))
+            self._complete_command_result(conn,row)
             self._audit(conn,"ack_report",{"id":report_id,"revision":revision})
             return {"id":report_id,"revision":revision,"status":"acknowledged"}
 
