@@ -122,6 +122,10 @@ def expire(conn,now):
                  lease_hash=NULL,lease_until=NULL
                  WHERE received_at IS NULL AND state NOT IN ('handled','failed','expired','closed')
                  AND expires_at<=?""",(now,now,now))
+    # A never-received answer can expire. Release only after its terminal expiry
+    # is committed in this same lock; delayed old envelopes then fail redeem.
+    conn.execute("""UPDATE commands SET answered_by=NULL WHERE state='awaiting_input'
+        AND answered_by IN (SELECT id FROM commands WHERE state='expired' AND received_at IS NULL)""")
 
 class CommandStore:
     def __init__(self,db_path:str):
@@ -138,6 +142,8 @@ class CommandStore:
             columns={r["name"] for r in conn.execute("PRAGMA table_info(commands)")}
             if "result_sequence" not in columns:
                 conn.execute("ALTER TABLE commands ADD COLUMN result_sequence INTEGER")
+            if "continuation_context" not in columns:
+                conn.execute("ALTER TABLE commands ADD COLUMN continuation_context TEXT")
 
     @contextmanager
     def _private_transaction(self):
@@ -304,7 +310,8 @@ class CommandStore:
         with self._authorized(boss_capability,"boss-redeem") as (_,conn,cap):
             row=command_row(conn,command_id);scope_row(row,cap)
             if payload_hash!=row["payload_hash"]: raise PermissionError("wrong_payload")
-            if row["received_at"] is None:
+            first_receive=row["received_at"] is None
+            if first_receive:
                 if row["expires_at"]<=now or row["state"] in TERMINAL:
                     expire(conn,now)
                     rejected=True
@@ -314,9 +321,35 @@ class CommandStore:
                     row=command_row(conn,command_id)
             if row["raw_input"] is None: rejected=True
             if not rejected:
+                # Redeeming the authorized answer closes only the answered question.
+                # Its continued scope belongs to this child command, never a run on
+                # the clarification parent. Return private context in the same lock.
+                continuation=json.loads(row["continuation_context"]) if row["continuation_context"] else None
+                if row["parent_id"] and continuation is None:
+                    parent=command_row(conn,row["parent_id"]);scope_row(parent,cap)
+                    if (parent["answered_by"]!=row["id"] or parent["project_id"]!=row["project_id"]
+                        or parent["decision"]!="needs_clarification" or parent["raw_input"] is None):
+                        raise PermissionError("wrong_parent")
+                    previous=json.loads(parent["continuation_context"]) if parent["continuation_context"] else None
+                    root=previous["root"] if previous else {"commandId":parent["id"],"payloadHash":parent["payload_hash"],"input":json.loads(parent["raw_input"])}
+                    question={"commandId":parent["id"],"payloadHash":parent["payload_hash"],
+                              "input":json.loads(parent["raw_input"]),"receipt":receipt(parent)}
+                    # Capture only the root objective and latest question, never an
+                    # accumulating transcript. It belongs to the ACTIVE child now.
+                    continuation={"root":root,"question":question}
+                    if parent["state"]=="awaiting_input":
+                        conn.execute("""UPDATE commands SET state='handled',stage='handled',terminal_at=?,
+                            last_handled_at=?,updated_at=? WHERE id=?""",(now,now,now,parent["id"]))
+                        question["receipt"]=receipt(command_row(conn,parent["id"]))
+                    encoded=json.dumps(continuation,ensure_ascii=False,separators=(",",":"))
+                    if len(encoded.encode())>65536:raise ValueError("continuation_too_large")
+                    conn.execute("UPDATE commands SET continuation_context=? WHERE id=?",(encoded,row["id"]))
                 # Private response only, for the authenticated original Boss.
                 result={"commandId":row["id"],"payloadHash":row["payload_hash"],
                         "input":json.loads(row["raw_input"]),"receipt":receipt(row)}
+                if continuation is not None:
+                    result["parent"]=continuation["question"]
+                    result["continuation"]=continuation
         # Expiry must commit before returning the terminal error.
         if rejected: raise CommandError("already_processed")
         return result
@@ -374,7 +407,10 @@ class CommandStore:
             forbidden=[row["boss_id"],row["binding_id"],row["owner_id"],row["run_id"]]
             if any(value and len(value)>=8 and value in summary for value in forbidden):
                 raise ValueError("unsafe_reply")
-            if raw and raw["text"] in summary: raise ValueError("unsafe_reply")
+            # Owner-facing authored replies may contain short common words. Reject
+            # an exact command echo or a long source substring, not ordinary chat.
+            if raw and (raw["text"]==summary or (len(raw["text"])>=16 and raw["text"] in summary)):
+                raise ValueError("unsafe_reply")
             if re.search(r"(?:[A-Za-z]:\\|/(?:home|Users|private|tmp|etc)/|(?:Bearer|TOKEN_SECRET)\b|[A-Za-z0-9_-]{48,})",summary):
                 raise ValueError("unsafe_reply")
             state="handled" if expected=="query_answer" else "awaiting_input" if expected=="clarification" else row["state"]
@@ -412,9 +448,9 @@ class CommandStore:
             conn.execute("""UPDATE commands SET state='closed',terminal_at=?,updated_at=?
               WHERE state='awaiting_input' AND reply_updated_at<=?""",
               (now,now,iso(parsed-timedelta(days=30))))
-            cleared=conn.execute("""UPDATE commands SET raw_input=NULL,reply_summary=NULL
+            cleared=conn.execute("""UPDATE commands SET raw_input=NULL,reply_summary=NULL,continuation_context=NULL
                 WHERE state IN ('handled','failed','expired','closed') AND terminal_at<=?
-                AND (raw_input IS NOT NULL OR reply_summary IS NOT NULL)""",
+                AND (raw_input IS NOT NULL OR reply_summary IS NOT NULL OR continuation_context IS NOT NULL)""",
                 (iso(parsed-timedelta(days=7)),)).rowcount
             # Receipt retention starts on terminal transition. Clarifications closed
             # today retain a visible closed receipt for the next 30 days.

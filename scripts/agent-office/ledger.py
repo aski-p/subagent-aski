@@ -106,6 +106,9 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS attempts (
  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), provider TEXT NOT NULL,
  observed_model TEXT, input_hash TEXT NOT NULL, state TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT);
+CREATE TABLE IF NOT EXISTS native_dispatches (
+ attempt_id TEXT PRIMARY KEY, command_id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id),
+ provider TEXT NOT NULL, state TEXT NOT NULL, child_id TEXT UNIQUE);
 CREATE TABLE IF NOT EXISTS checkpoints (
  id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id), weight REAL NOT NULL,
  boss_only INTEGER NOT NULL, state TEXT NOT NULL, attempt_id TEXT, evidence_id TEXT,
@@ -143,6 +146,7 @@ class Ledger:
         with self.transaction() as conn:
             self._capability(conn)
             self._migrate_command_scopes(conn)
+            conn.execute("CREATE TABLE IF NOT EXISTS native_dispatches (attempt_id TEXT PRIMARY KEY, command_id TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES tasks(id), provider TEXT NOT NULL, state TEXT NOT NULL, child_id TEXT UNIQUE)")
 
     @staticmethod
     def _connect(path):
@@ -387,11 +391,18 @@ class Ledger:
             if old:
                 if old["task_id"]!=task_id or task["current_attempt"]!=aid or old["input_hash"]!=digest(canonical(attempt)): raise ValueError("attempt_conflict")
                 return {"id":aid}
+            if conn.execute("SELECT 1 FROM native_dispatches WHERE task_id=? AND state='uncertain' AND attempt_id!=?",(task_id,aid)).fetchone():
+                raise ValueError("reconciliation_required")
             # Superseding this task releases only its current slot in this transaction.
             at=timestamp()
             conn.execute("UPDATE attempts SET ended_at=?,state='canceled' WHERE task_id=? AND ended_at IS NULL",(at,task_id))
             total=conn.execute("SELECT count(*) FROM attempts WHERE ended_at IS NULL").fetchone()[0]
             claude=conn.execute("SELECT count(*) FROM attempts WHERE ended_at IS NULL AND provider='claude'").fetchone()[0]
+            reserved=conn.execute("SELECT task_id,state FROM native_dispatches WHERE attempt_id=?",(aid,)).fetchone()
+            if reserved and (reserved["task_id"]!=task_id or reserved["state"]!="uncertain"):raise ValueError("reservation_conflict")
+            reservations=conn.execute("SELECT provider FROM native_dispatches WHERE state='uncertain' AND attempt_id!=?",(aid,)).fetchall()
+            total+=len(reservations)
+            claude+=sum(r["provider"]=="claude" for r in reservations)
             if total>=4 or (provider=="claude" and claude>=2): raise ValueError("admission_limit")
             model=attempt.get("observedModel")
             if model is not None and (not isinstance(model,str) or not re.fullmatch(r"(?:gpt|claude)-[a-z0-9.-]{1,80}",model)):
@@ -403,6 +414,86 @@ class Ledger:
             conn.execute("UPDATE runs SET updated_at=? WHERE id=?",(at,task["run_id"]))
             self._audit(conn,"start_attempt",{"taskId":task_id,"attempt":attempt})
             return {"id":aid}
+
+    def _native_command(self, conn, command_id):
+        from commands import command_row
+        cap=self._authorize(conn,{"boss"})
+        row=command_row(conn,command_id)
+        if row["boss_id"]!=cap["boss_id"]: raise PermissionError("wrong_boss")
+        if row["decision"] not in {"new_task","revise_run"} or row["received_at"] is None or row["state"] in {"handled","failed","expired","closed"}:
+            raise ValueError("command_not_dispatchable")
+        return row
+
+    def reserve_command_attempt(self, command_id, task_id, attempt_id):
+        """Commit a capacity reservation before ROOT calls its native spawn tool.
+
+        The first returned maySpawn permit is consumed immediately: a retry cannot
+        distinguish a tool call from a lost response, so it requires reconciliation.
+        No attempt/model/session/working assertion exists before observed proof.
+        """
+        key(attempt_id)
+        with self.transaction() as conn:
+            command=self._native_command(conn,command_id)
+            task=conn.execute("SELECT * FROM tasks WHERE id=? AND run_id=?",(key(task_id),command["run_id"])).fetchone()
+            if task is None: raise PermissionError("wrong_task")
+            old=conn.execute("SELECT * FROM native_dispatches WHERE attempt_id=?",(attempt_id,)).fetchone()
+            if old:
+                if old["command_id"]!=command_id or old["task_id"]!=task_id: raise ValueError("attempt_conflict")
+                return {"attemptId":attempt_id,"maySpawn":False,"state":old["state"],"childId":old["child_id"]}
+            if conn.execute("SELECT 1 FROM attempts WHERE id=?",(attempt_id,)).fetchone():raise ValueError("attempt_conflict")
+            if conn.execute("SELECT 1 FROM native_dispatches d LEFT JOIN attempts a ON a.id=d.attempt_id WHERE d.task_id=? AND (d.state='uncertain' OR (d.state='observed' AND a.ended_at IS NULL))",(task_id,)).fetchone():
+                raise ValueError("reconciliation_required")
+            if task["current_attempt"] is not None:
+                prior=conn.execute("SELECT ended_at FROM attempts WHERE id=?",(task["current_attempt"],)).fetchone()
+                if not prior or prior[0] is None:raise ValueError("safe_checkpoint_required")
+            if command["decision"]=="revise_run":
+                revision=conn.execute("SELECT plan_version FROM command_revisions WHERE command_id=?",(command_id,)).fetchone()
+                run=conn.execute("SELECT plan_version FROM runs WHERE id=?",(command["run_id"],)).fetchone()
+                if not revision or revision[0]!=run[0]: raise ValueError("old_plan")
+            slots=list(conn.execute("SELECT provider FROM attempts WHERE ended_at IS NULL"))
+            slots+=list(conn.execute("SELECT provider FROM native_dispatches WHERE state='uncertain'"))
+            if len(slots)>=4 or (task["provider"]=="claude" and sum(r[0]=="claude" for r in slots)>=2):
+                raise ValueError("admission_limit")
+            # Claude has no native supervisor in W3. Never substitute a provider.
+            if task["provider"]!="codex": raise ValueError("supervisor_unavailable")
+            conn.execute("INSERT INTO native_dispatches VALUES(?,?,?,?,'uncertain',NULL)",(attempt_id,command_id,task_id,task["provider"]))
+            conn.execute("UPDATE commands SET stage='dispatch_intent',updated_at=? WHERE id=?",(timestamp(),command_id))
+            self._audit(conn,"native_intent",{"commandId":command_id,"taskId":task_id,"attemptId":attempt_id})
+            return {"attemptId":attempt_id,"maySpawn":True,"state":"uncertain","childId":None}
+
+    def confirm_command_attempt(self, command_id, attempt_id, child_id, observed_provider, observed_model):
+        """Trusted original Boss supplies values from its ACTUAL native tool result."""
+        key(child_id)
+        with self.transaction() as conn:
+            self._native_command(conn,command_id)
+            row=conn.execute("SELECT * FROM native_dispatches WHERE attempt_id=? AND command_id=?",(key(attempt_id),command_id)).fetchone()
+            if row is None or row["state"] not in {"uncertain","observed"}: raise ValueError("reservation_required")
+            if row["provider"]!=observed_provider: raise ValueError("observed_provider_required")
+            if row["child_id"] is not None and row["child_id"]!=child_id: raise ValueError("child_conflict")
+            self.start_attempt(row["task_id"],{"id":attempt_id,"observedProvider":observed_provider,"observedModel":observed_model,"nativeChildId":child_id})
+            conn.execute("UPDATE native_dispatches SET state='observed',child_id=? WHERE attempt_id=?",(child_id,attempt_id))
+            conn.execute("UPDATE commands SET state='started',stage='dispatched',updated_at=? WHERE id=?",(timestamp(),command_id))
+            return {"registered":True}
+
+    def reconcile_command_attempt(self, command_id, attempt_id, proof):
+        from commands import exact, bounded_text
+        exact(proof,("status",),("evidence","childId","observedProvider","observedModel"))
+        with self.transaction() as conn:
+            self._native_command(conn,command_id)
+            row=conn.execute("SELECT * FROM native_dispatches WHERE attempt_id=? AND command_id=?",(key(attempt_id),command_id)).fetchone()
+            if row is None: raise ValueError("reservation_required")
+            if proof["status"]=="observed":
+                exact(proof,("status","childId","observedProvider","observedModel"))
+                return self.confirm_command_attempt(command_id,attempt_id,proof["childId"],proof["observedProvider"],proof["observedModel"])
+            if proof["status"]=="unknown":
+                exact(proof,("status",))
+                return {"state":row["state"],"maySpawn":False}
+            exact(proof,("status","evidence"))
+            if proof["status"]!="absent" or row["state"]!="uncertain": raise ValueError("invalid_reconciliation")
+            bounded_text(proof["evidence"],1000)
+            conn.execute("UPDATE native_dispatches SET state='canceled' WHERE attempt_id=?",(attempt_id,))
+            self._audit(conn,"native_absent",proof)
+            return {"state":"canceled","maySpawn":False}
 
     def _checkpoint_event(self, event, verify):
         with self.transaction() as conn:

@@ -9,6 +9,11 @@ from pathlib import PurePosixPath, PureWindowsPath
 import re
 import subprocess
 import sys
+import os
+from pathlib import Path
+import sqlite3
+import time
+from boss_control import command_remote, protected_json, protected_path, HelperRejected
 
 UUID_RE = re.compile(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}')
 KEY_RE = re.compile(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,63}')
@@ -88,6 +93,106 @@ def queue_report(codex_exe, boss_id, report, run_process=None, timeout=QUEUE_TIM
     if completed.returncode != 0:
         return {**result, 'status': 'retry_wait', 'errorCode': 'queue_rejected'}
     return result
+
+def render_command_envelope(command):
+    if not isinstance(command,dict) or set(command)!={'commandId','payloadHash','leaseToken','bindingRevision'}:
+        raise ValueError('invalid_claim')
+    _require_uuid(command['commandId'])
+    if not re.fullmatch(r'[0-9a-f]{64}',command['payloadHash']) or type(command['bindingRevision']) is not int or command['bindingRevision']!=1:
+        raise ValueError('invalid_claim')
+    # No raw text, lease, destination or credential crosses into the queue.
+    return '$agent-office-boss\noffice.user-command.v1\n'+json.dumps({k:command[k] for k in ('commandId','payloadHash','bindingRevision')},separators=(',',':'))
+
+
+def queue_command(config, claim, run_process=None):
+    _require_uuid(config['bossId']);_require_executable(config['codexExe'])
+    if claim['bindingRevision']!=config['bindingRevision']:raise ValueError('wrong_binding_revision')
+    message=render_command_envelope(claim)
+    flags={'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}
+    try:
+        result=(run_process or DEFAULT_RUN_PROCESS)([config['codexExe'],'queue','--thread',config['bossId'],'--message',message],shell=False,check=False,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=30,**flags)
+        return 'queued' if result.returncode==0 else 'retry_wait'
+    except OSError:return 'retry_wait'
+    except subprocess.SubprocessError:return 'uncertain'
+
+
+def command_outbox(config):
+    path=Path(config['outboxPath'])
+    if not path.is_absolute() or path.is_symlink() or path.parent.is_symlink():raise PermissionError('unprotected_outbox')
+    if not path.parent.is_dir():raise PermissionError('unprotected_outbox')
+    if sys.platform!='win32' and (path.parent.stat().st_mode & 0o077 or path.parent.stat().st_uid!=os.getuid()):raise PermissionError('unprotected_outbox')
+    if not path.exists():
+        fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);os.close(fd)
+    if sys.platform!='win32' and (path.stat().st_mode & 0o077 or path.stat().st_uid!=os.getuid()):raise PermissionError('unprotected_outbox')
+    protected_path(path)
+    conn=sqlite3.connect(path,timeout=1,isolation_level=None)
+    conn.row_factory=sqlite3.Row
+    conn.execute('PRAGMA journal_mode=DELETE');conn.execute('PRAGMA synchronous=FULL')
+    conn.execute('CREATE TABLE IF NOT EXISTS command_sends (command_id TEXT,lease TEXT,payload_hash TEXT,binding_revision INTEGER,boss_id TEXT,state TEXT,outcome TEXT,event_time TEXT, PRIMARY KEY(command_id,lease))')
+    conn.execute('CREATE TABLE IF NOT EXISTS command_notices (command_id TEXT PRIMARY KEY,last_notice REAL NOT NULL)')
+    return conn
+
+
+def bridge_commands_once(config):
+    """One serialized tick; a lost send outcome is NEVER a new send permit.
+
+    W1 alone schedules the three total claims (initial, +5s, +30s).
+    Local rows hold only transport metadata in a separate private keyspace.
+    """
+    from datetime import datetime, timezone
+    stamp=lambda:datetime.now(timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+    _require_uuid(config['bossId']);_require_executable(config['codexExe'])
+    if type(config.get('bindingRevision')) is not int or config['bindingRevision']!=1:raise ValueError('wrong_binding_revision')
+    deadline=time.monotonic()+90
+    conn=command_outbox(config)
+    result={'queued':0,'reconciled':0,'terminalNotice':False}
+    try:
+        # The existing IgnoreNew exporter serializes ticks; transactions protect each durable boundary.
+        conn.execute('BEGIN IMMEDIATE')
+        pending=conn.execute("SELECT * FROM command_sends WHERE state!='recorded' ORDER BY rowid LIMIT 3").fetchall()
+        for row in pending:
+            if time.monotonic()>deadline-70:break
+            if row['boss_id']!=config['bossId'] or row['binding_revision']!=config['bindingRevision']:raise PermissionError('wrong_outbox_binding')
+            outcome=row['outcome'] or 'uncertain'
+            event_time=row['event_time'] or stamp()
+            try:command_remote(config,'command-transport',{'commandId':row['command_id'],'leaseToken':row['lease'],'outcome':outcome,'now':event_time})
+            except HelperRejected:
+                # A fixed helper rejects stale/fenced leases; no new send is authorized.
+                conn.execute("UPDATE command_sends SET state='recorded',outcome='uncertain' WHERE command_id=? AND lease=?",(row['command_id'],row['lease']))
+            except (OSError,ValueError,subprocess.SubprocessError):
+                # Transient transport errors retain the exact saved event for next tick.
+                continue
+            else:conn.execute("UPDATE command_sends SET state='recorded' WHERE command_id=? AND lease=?",(row['command_id'],row['lease']))
+            result['reconciled']+=1
+        conn.commit()
+        if time.monotonic()>deadline-70:return result
+        claim=command_remote(config,'command-claim',{})
+        if claim is None:return result
+        render_command_envelope(claim)
+        if claim['bindingRevision']!=config['bindingRevision']:raise PermissionError('wrong_binding_revision')
+        conn.execute('BEGIN IMMEDIATE')
+        old=conn.execute('SELECT 1 FROM command_sends WHERE command_id=? AND lease=?',(claim['commandId'],claim['leaseToken'])).fetchone()
+        if old:raise ValueError('repeated_lease')
+        conn.execute("INSERT INTO command_sends VALUES(?,?,?,?,?,'sending',NULL,NULL)",(claim['commandId'],claim['leaseToken'],claim['payloadHash'],claim['bindingRevision'],config['bossId']))
+        conn.commit()  # Durable intent BEFORE the external send.
+        outcome=queue_command(config,claim)
+        now=stamp()
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute("UPDATE command_sends SET state='reporting',outcome=?,event_time=? WHERE command_id=? AND lease=?",(outcome,now,claim['commandId'],claim['leaseToken']))
+        conn.commit()  # Persist the exact transport event for idempotent retry.
+        receipt=command_remote(config,'command-transport',{'commandId':claim['commandId'],'leaseToken':claim['leaseToken'],'outcome':outcome,'now':now})
+        conn.execute('BEGIN IMMEDIATE')
+        conn.execute("UPDATE command_sends SET state='recorded' WHERE command_id=? AND lease=?",(claim['commandId'],claim['leaseToken']))
+        if receipt and receipt.get('state')=='failed':
+            old=conn.execute('SELECT last_notice FROM command_notices WHERE command_id=?',(claim['commandId'],)).fetchone()
+            if old is None or time.time()-old[0]>=120:
+                conn.execute('INSERT OR REPLACE INTO command_notices VALUES(?,?)',(claim['commandId'],time.time()))
+                result['terminalNotice']=True  # Safe status signal; never a fourth queue call.
+        conn.commit()
+        result['queued']=int(outcome=='queued')
+        return result
+    finally:conn.close()
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Queue the designated transport probe to the bound Boss thread.')

@@ -31,4 +31,20 @@ class QuietTransportTest(unittest.TestCase):
             with self.assertRaises(subprocess.CalledProcessError):
                 exporter.transport('sanitized.json', 'aski@pgx.tailtest.ts.net', 'test-key')
 
-if __name__ == '__main__': unittest.main()
+
+
+class ExportLoopHookTest(unittest.TestCase):
+    def test_metadata_failure_does_not_skip_command_and_once(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder,patch.object(sys,'argv',['export-windows.py','--registry','synthetic','--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--command-config','private.json','--once']),patch.object(exporter,'run_once',side_effect=OSError),patch.object(exporter,'protected_json',return_value={'synthetic':True}),patch.object(exporter,'bridge_commands_once') as command,patch.object(exporter.time,'sleep') as sleep:
+            exporter.main();command.assert_called_once_with({'synthetic':True});sleep.assert_not_called()
+    def test_command_failure_does_not_change_metadata_or_once(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder,patch.object(sys,'argv',['export-windows.py','--registry','synthetic','--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--command-config','private.json','--once']),patch.object(exporter,'run_once') as metadata,patch.object(exporter,'protected_json',side_effect=PermissionError),patch.object(exporter.time,'sleep') as sleep:
+            exporter.main();metadata.assert_called_once();sleep.assert_not_called()
+    def test_absent_config_preserves_metadata_only(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder,patch.object(sys,'argv',['export-windows.py','--registry','synthetic','--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--once']),patch.object(exporter,'run_once'),patch.object(exporter,'bridge_commands_once') as command:
+            exporter.main();command.assert_not_called()
+
+if __name__=='__main__':unittest.main()
