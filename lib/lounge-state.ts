@@ -16,8 +16,8 @@ export function selectLoungeRoles(input:{projects:PrivateProject[];publicProject
  const attempt=[...task.attempts].sort((a,b)=>Date.parse(b.startedAt)-Date.parse(a.startedAt)||b.id.localeCompare(a.id))[0]??null;
  let mode:LoungeMode;
  if(stale)mode='stale';else if(task.state==='working'||task.state==='qa'){
- const eligibleAttempt=attempt&&!attempt.endedAt&&attempt.state===task.state;
- const proof=eligibleAttempt?activityProofs.find(p=>{const confirmed=Date.parse(p.confirmedAt),expires=Date.parse(p.leaseExpiresAt);return p.taskId===task.id&&p.runId===task.runId&&p.attemptId===attempt.id&&p.planVersion===task.planVersion&&p.provider===task.provider&&p.source===(task.provider==='codex'?'codex-native':'claude-supervisor')&&p.state===(attempt.state==='working'?'running':'reviewing')&&Number.isFinite(confirmed)&&Number.isFinite(expires)&&confirmed<=nowMs+5000&&nowMs-confirmed<=90000&&expires>nowMs&&expires<=confirmed+90000}):undefined;
+ const eligibleAttempt=attempt&&!attempt.endedAt&&(attempt.state==='working'||attempt.state==='qa');
+ const proof=eligibleAttempt?activityProofs.find(p=>{const confirmed=Date.parse(p.confirmedAt),expires=Date.parse(p.leaseExpiresAt);return p.taskId===task.id&&p.runId===task.runId&&p.attemptId===attempt.id&&p.planVersion===task.planVersion&&p.provider===task.provider&&p.source===(task.provider==='codex'?'codex-native':'claude-supervisor')&&(p.state==='running'||p.state==='reviewing')&&Number.isFinite(confirmed)&&Number.isFinite(expires)&&confirmed<=nowMs+5000&&nowMs-confirmed<=90000&&expires>nowMs&&expires<=confirmed+90000}):undefined;
  mode=proof?(proof.state==='reviewing'?'reviewing':'working'):'unknown';
  }else mode=({queued:'waiting',blocked:'blocked',failed:'failed',canceled:'canceled',done:'completed'} as const)[task.state];
  return {role,mode,task,attemptId:attempt?.id??null,verifiedPct:task.checkpoints.some(c=>c.weight>0)?task.verifiedPct:null,candidateTaskIds:candidates.map(t=>t.id),statusLabel:labels[mode],completionKey:mode==='completed'&&attempt?`${task.id}:${attempt.id}`:null};
