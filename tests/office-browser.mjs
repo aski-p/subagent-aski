@@ -396,7 +396,7 @@ try {
       await page.getByText("선택된 최근 기록만 확인", { exact: false }).count(),
       1,
     );
-    assert.equal(await page.getByText("모델 확인 불가").count(), 1);
+    assert.equal(await page.getByText("모델 미수집").count(), 1);
     await page.screenshot({
       path: screenshotDir + "/owner-unknown-" + width + ".png",
       fullPage: true,
@@ -425,6 +425,56 @@ try {
     await page.keyboard.press("Escape");
     assert.equal(await page.getByRole("dialog").count(), 0);
     assert.equal(await row.evaluate((e) => e === document.activeElement), true);
+    await page.close();
+  }
+  // Mixed registered and unassigned sessions preserve exact selection and filter boundaries.
+  for (const width of [1440, 375]) {
+    const diagnostics = Array.from({length: 43}, (_, i) => ({...sample.agents[0],
+      id: `unassigned-${i}`, name: i === 0 ? "Approved diagnostic" : null, roleId: null, projectId: null, currentTaskId: null,
+      provider: "openai", model: `diagnostic-${i}-` + "x".repeat(120), parentId: null}));
+    const data = {...sample, agents: [{...sample.agents[0], name:null}, {...sample.agents[0], id:"project-only", name:"Boss", roleId:null, currentTaskId:null}, ...diagnostics]};
+    const page = await pageFor(width, true, () => ({status:200,body:data}), false, () => ({status:200,body:privateProgress}));
+    let posts = 0;
+    page.on("request", request => { if (request.method() === "POST") posts++; });
+    await page.getByText("Frame(UI/UX)", {exact:true}).last().waitFor();
+    const details = page.locator(".roster-diagnostics");
+    await details.locator("summary").waitFor();
+    assert.equal(await page.locator(".roster-row").count(),2);
+    const projectRow = page.getByRole("button", {name:/Boss.*alpha/});
+    assert.equal(await projectRow.locator(".unknown").textContent(),"B");
+    assert.doesNotMatch(await projectRow.textContent(), /역할 확인 불가|프로젝트 확인 불가|작업: 확인 불가/);
+    assert.equal(await details.locator("summary").textContent(),"미등록 세션 43개");
+    assert.equal(await details.evaluate(e => e.open),false);
+    await details.locator("summary").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await details.locator(".diagnostic-row").count(),20);
+    assert.equal(await details.getByText("Approved diagnostic", {exact:false}).count(),1);
+    const chosen = details.locator(".diagnostic-row").first();
+    const model = await chosen.locator("small").textContent();
+    await chosen.focus(); await page.keyboard.press("Enter");
+    await page.getByRole("dialog").waitFor();
+    assert.equal(await page.getByRole("dialog").getByText(model, {exact:true}).count(),1);
+    await page.keyboard.press("Escape");
+    assert.equal(await chosen.evaluate(e => e === document.activeElement),true);
+    await details.getByRole("button",{name:/미등록 세션 더 보기/}).click();
+    await details.getByRole("button",{name:/미등록 세션 더 보기/}).click();
+    assert.equal(await details.locator(".diagnostic-row").count(),43);
+    await noOverflow(page);
+    await page.screenshot({path:screenshotDir + "/roster-mixed-" + width + ".png",fullPage:true});
+    await page.locator(".filters select").nth(1).selectOption("openai");
+    assert.equal(await page.locator(".roster-row").count(),0);
+    assert.equal(await page.locator(".roster-diagnostics summary").textContent(),"미등록 세션 43개");
+    assert.equal(await page.locator(".roster-diagnostics").evaluate(e => e.open),false);
+    await page.locator(".filters select").nth(1).selectOption("");
+    await page.locator(".filters select").first().selectOption("private:alpha");
+    assert.equal(await page.locator(".roster-diagnostics").count(),0);
+    assert.equal(await page.locator(".roster-row").count(),0);
+    await page.locator(".filters select").first().selectOption("");
+    await page.locator(".roster-diagnostics summary").waitFor();
+    assert.equal(await page.locator(".roster-diagnostics").evaluate(e => e.open),false);
+    assert.equal(posts,0);
+    await page.getByRole("button",{name:"로그아웃"}).click();
+    assert.equal(await page.locator(".roster-diagnostics").count(),0);
     await page.close();
   }
   // Contract-sized labels must fit within their row, not be clipped.

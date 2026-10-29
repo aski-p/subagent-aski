@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchOfficeSnapshot, fetchOfficeProgress, OfficeFetchError } from "@/lib/office-browser";
 import { Avatar, roles, agentLabel } from "./role-avatar";
+import { OfficeRoster } from "./office-roster";
 import { AgentDetail } from "./agent-detail";
 import { AgentLounge } from "./agent-lounge";
 import { selectLoungeRoles } from "@/lib/lounge-state";
@@ -380,76 +381,8 @@ export default function OfficeDashboard() {
                     : "연결을 확인한 후 다시 시도합니다."}
                 </p>
               )}
-              <div className="roster">
-                <div className="roster-heading">
-                  <span>에이전트 / 역할</span>
-                  <span>제공자 / 모델</span>
-                  <span>마지막 업무</span>
-                  <span>상태</span>
-                </div>
-                {filtered.length ? (
-                  filtered.slice(0, visibleCount).map((a) => (
-                    <button
-                      className="roster-row"
-                      key={a.id}
-                      onClick={() => setSelected(a.id)}
-                    >
-                      <span className="person">
-                        {a.roleId ? (
-                          <Avatar role={a.roleId} />
-                        ) : (
-                          <span className="unknown">?</span>
-                        )}
-                        <span>
-                          <strong>{agentLabel(a)}</strong>
-                          <small>
-                            {a.roleId ? roles[a.roleId][0] : "역할 확인 불가"} ·{" "}
-                            {a.projectId ?? "프로젝트 확인 불가"}
-                          </small>
-                          <small>
-                            작업:{" "}
-                            {a.currentTaskId
-                              ? (snapshot?.tasks.find(
-                                  (t) => t.id === a.currentTaskId,
-                                )?.title ?? "등록된 제목 없음")
-                              : "확인 불가"}
-                          </small>
-                        </span>
-                      </span>
-                      <span>
-                        {a.provider ?? "제공자 확인 불가"}
-                        <small>{a.model ?? "모델 확인 불가"}</small>
-                      </span>
-                      <span>{time(a.lastActivityAt)}</span>
-                      <span className="status">
-                        {
-                          {
-                            working: "작업 시작 기록",
-                            completed: "완료 기록",
-                            blocked: "차단됨",
-                            idle: "대기 기록",
-                            unknown: "확인 불가",
-                          }[a.status]
-                        }
-                      </span>
-                    </button>
-                  ))
-                ) : (
-                  <div className="empty">
-                    {snapshot
-                      ? "조건에 맞는 에이전트 기록이 없습니다."
-                      : "업무 기록을 기다리고 있습니다."}
-                  </div>
-                )}
-              </div>
-              {visibleCount < filtered.length && (
-                <button
-                  className="more"
-                  onClick={() => setVisibleCount((n) => n + 20)}
-                >
-                  더 보기 ({visibleCount} / {filtered.length})
-                </button>
-              )}
+              <OfficeRoster key={JSON.stringify([project, provider])} agents={filtered} snapshot={snapshot}
+                visibleCount={visibleCount} onShowMore={() => setVisibleCount(n => n + 20)} onSelect={setSelected} />
               <h3 className="task-title">
                 작업 <span>{tasks.length}</span>
               </h3>

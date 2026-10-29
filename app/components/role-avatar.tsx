@@ -11,7 +11,7 @@ export const roles: Record<RoleId, [string, string, string]> = {
 };
 
 export function agentLabel(agent: Pick<AgentView, "name" | "roleId">): string {
-  const name = agent.name ?? "이름 확인 불가";
+  const name = agent.name ?? (agent.roleId ? roles[agent.roleId][0] : "이름 확인 불가");
   if (!agent.roleId) return name;
   const label = roles[agent.roleId][0];
   const base = label.split("(")[0];
