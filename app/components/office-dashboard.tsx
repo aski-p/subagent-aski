@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchOfficeSnapshot, fetchOfficeProgress, OfficeFetchError } from "@/lib/office-browser";
 import { Avatar, roles, agentLabel } from "./role-avatar";
 import { AgentDetail } from "./agent-detail";
+import { AgentLounge } from "./agent-lounge";
+import { selectLoungeRoles } from "@/lib/lounge-state";
+import type { RoleId } from "@/lib/status-contract";
 import { BossCommandComposer } from "./boss-command-composer";
 import { SourceCoverageView } from "./source-coverage";
 import { usePublicEvidence } from "./public-evidence";
@@ -28,6 +31,21 @@ export default function OfficeDashboard() {
   const privateSelection = selection.kind === "private";
   const privateProject = privateSelection ? progress?.projects.find((p) => p.id === selection.id) : undefined;
   const [stale, setStale] = useState(false);
+  const [loungeSelection, setLoungeSelection] = useState<Partial<Record<RoleId,string>>>({});
+  const [loungeTask, setLoungeTask] = useState<string|null>(null);
+  const [motionPaused, setMotionPaused] = useState(false);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const loungeReturnFocus = useRef<HTMLElement|null>(null);
+  const loungeDetailRef = useRef<HTMLElement|null>(null);
+  useEffect(() => { if (loungeTask) loungeDetailRef.current?.focus(); }, [loungeTask]);
+  useEffect(() => {
+    if (auth !== "owner") return;
+    const tick = () => setNowMs(Date.now());
+    const visible = () => { if (!document.hidden) tick(); };
+    const timer = setInterval(() => { if (!document.hidden) tick(); }, 1000);
+    document.addEventListener("visibilitychange", visible);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+  }, [auth]);
   const [provider, setProvider] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(20);
@@ -64,13 +82,15 @@ export default function OfficeDashboard() {
     active.current?.abort();
     setSnapshot(null);
     setProgress(null);
+    setLoungeSelection({});
+    setLoungeTask(null);
     setSelected(null);
     setProject("");
     setProvider("");
     setVisibleCount(20);
     setStale(false);
     setAuth("out");
-  }, []);
+  }, [setSelected]);
   const refresh = useCallback(async () => {
     const id = ++generation.current;
     active.current?.abort();
@@ -122,6 +142,20 @@ export default function OfficeDashboard() {
     clearPrivate();
     await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
   };
+  const catalogAvailable = progress?.catalogState === "available";
+  const normalizedProvider = provider.toLowerCase();
+  const knownProvider = normalizedProvider === "codex" || normalizedProvider === "claude";
+  const loungeRoles = selectLoungeRoles({
+    projects: catalogAvailable ? progress.projects : [],
+    publicProjectIds: projects.map(p => p.name).filter(id => !progress?.projects.some(p => p.id === id)),
+    runs: catalogAvailable ? progress.runs : [],
+    tasks: catalogAvailable && (!provider || knownProvider) ? progress.tasks : [],
+    activityProofs: progress?.activityProofs ?? [],
+    filter: {project: !project ? {kind:"all"} : privateSelection ? {kind:"private",id:selection.id} : {kind:"public",id:selection.id},
+      provider: knownProvider ? normalizedProvider as "codex" | "claude" : null},
+    selectedTaskIds:loungeSelection, observedAt:progress?.observedAt ?? null, fetchFailed:stale, nowMs
+  });
+  const detail = loungeRoles.find(r => r.task?.id === loungeTask)?.task;
   const agent = snapshot?.agents.find((a) => a.id === selected);
   const filtered =
     snapshot?.agents
@@ -269,6 +303,8 @@ export default function OfficeDashboard() {
                       generation.current++;
                       active.current?.abort();
                       setProject(e.target.value);
+                      setLoungeSelection({});
+                      setLoungeTask(null);
                       setVisibleCount(20);
                       setSelected(null);
                     }}
@@ -296,6 +332,8 @@ export default function OfficeDashboard() {
                     value={provider}
                     onChange={(e) => {
                       setProvider(e.target.value);
+                      setLoungeSelection({});
+                      setLoungeTask(null);
                       setVisibleCount(20);
                     }}
                   >
@@ -313,6 +351,16 @@ export default function OfficeDashboard() {
                 </label>
                 <span>기준 시각 {time(snapshot?.observedAt)}</span>
               </div>
+              <AgentLounge roles={loungeRoles} motionPaused={motionPaused} onMotionPausedChange={setMotionPaused}
+                onSelectTask={(role,id) => { setLoungeSelection(old => ({...old,[role]:id})); setLoungeTask(null); }}
+                onOpenTask={id => { loungeReturnFocus.current = document.activeElement as HTMLElement; setLoungeTask(id); }} />
+              {detail && <section ref={loungeDetailRef} className="lounge-detail" aria-label="선택한 업무 상세" tabIndex={-1}>
+                <h3>선택한 업무 · {detail.id}</h3>
+                <p>{detail.provider} / {detail.observedModel ?? detail.requestedModel ?? "모델 미확인"}</p>
+                <p>검증된 완료율 {detail.checkpoints.some(c=>c.weight>0) ? detail.verifiedPct + "%" : "— / 기준 없음"}</p>
+                <ul>{detail.checkpoints.map(c=><li key={c.id}>{c.label} · {c.state}</li>)}</ul>
+                <button type="button" onClick={() => {setLoungeTask(null); loungeReturnFocus.current?.focus();}}>닫기</button>
+              </section>}
               {progress && progress.catalogState !== "available" && (
                 <p className="warning" role="status">{progress.catalogState === "stale" ? "비공개 프로젝트 목록 갱신 실패. 마지막 정상 목록을 표시합니다." : "비공개 프로젝트 목록을 불러올 수 없습니다."}</p>
               )}

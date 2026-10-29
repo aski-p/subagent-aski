@@ -11,7 +11,8 @@ export function LoungeAvatar({ role, mode, paused }: { role: RoleId; mode: Loung
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img {...getImageProps({ src: roleArt[role].src, alt: "", width: 384, height: 256, sizes: "192px" }).props} alt="" />
       </div>
-      {mode === "working" && <span className="lounge-sweat">◉</span>}
+      {mode === "working" && <><span className="lounge-paper">▤</span><span className="lounge-sweat">●</span></>}
+      {mode === "reviewing" && <span className="lounge-thought">✓ · ·</span>}
     </div>
   );
 }

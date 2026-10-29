@@ -260,10 +260,13 @@ try {
         .count(),
       1,
     );
-    const top = await page
-      .getByRole("button", { name: /Synthetic Beta/ })
-      .boundingBox();
-    assert.ok(top && top.y < 900, "work visible in first viewport");
+    assert.equal(await page.locator(".agent-lounge .lounge-role").count(), 6);
+    assert.equal(await page.locator(".agent-lounge").evaluate(room =>
+      !!(room.compareDocumentPosition(document.querySelector(".roster")) & Node.DOCUMENT_POSITION_FOLLOWING)), true,
+      "shared office precedes the roster");
+    const work = page.getByRole("button", { name: /Synthetic Beta/ });
+    await work.scrollIntoViewIfNeeded();
+    assert.equal(await work.isVisible(), true, "work remains reachable below the office");
     for (const source of sources)
       assert.equal(
         (await page.getByText(source, { exact: true }).count()) > 0,

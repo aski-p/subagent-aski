@@ -22,3 +22,15 @@ test('attempt timestamp ties use id and state priority retains one task each',()
 test('provider collision cannot conceal or select valid work',()=>{const collision:TaskProgress={...task,id:'a',provider:'claude'};const result=frame({tasks:[collision,task],selectedTaskIds:{frame:'a'}});assert.equal(result.task?.id,'t');assert.deepEqual(result.candidateTaskIds,['t']);assert.equal(result.mode,'working');const diagnostic=frame({tasks:[collision]});assert.equal(diagnostic.mode,'unknown');assert.equal(diagnostic.statusLabel,'배정 확인 필요');assert.equal(diagnostic.task,null);assert.equal(diagnostic.verifiedPct,null);assert.deepEqual(diagnostic.candidateTaskIds,[])});
 test('latest attempt must be execution eligible',()=>{for(const state of ['failed','canceled','done','blocked','queued'] as const){const latest:AttemptView={...task.attempts[0],id:'new',state,startedAt:'2026-01-01T00:00:00Z'};assert.equal(frame({tasks:[{...task,attempts:[task.attempts[0],latest]}],activityProofs:[{...proof,attemptId:'new'}]}).mode,'unknown',state)}assert.equal(frame({tasks:[{...task,attempts:[{...task.attempts[0],state:'qa'}]}]}).mode,'working');assert.equal(frame({activityProofs:[{...proof,state:'reviewing'}]}).mode,'reviewing');assert.equal(frame({tasks:[{...task,state:'qa',attempts:[{...task.attempts[0],state:'qa'}]}],activityProofs:[{...proof,state:'reviewing'}]}).mode,'reviewing')});
 test('reviewing proof determines phase for either eligible active attempt',()=>{const reviewing={...proof,state:'reviewing'} as ActivityProof;assert.equal(frame({activityProofs:[reviewing]}).mode,'reviewing');assert.equal(frame({tasks:[{...task,state:'qa'}],activityProofs:[reviewing]}).mode,'reviewing')});
+
+test('task must match joined run plan before selection',()=>{
+ const current={...task,id:'current',planVersion:2};
+ const result=frame({runs:[{...run,planVersion:2}],tasks:[task,current],selectedTaskIds:{frame:'t'}});
+ assert.equal(result.task?.id,'current');
+ assert.deepEqual(result.candidateTaskIds,['current']);
+ assert.equal(frame({runs:[{...run,planVersion:2}]}).task,null);
+});
+
+test('proof expires independently of a fresh export',()=>{
+ assert.equal(frame({nowMs:now+31000,observedAt:'2026-01-01T00:00:31Z'}).mode,'unknown');
+});
