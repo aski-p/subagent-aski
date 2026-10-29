@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 const base = "http://localhost:3199";
 const now = new Date().toISOString();
+const emptyProgress = {schemaVersion:1,observedAt:now,catalogState:"available",projects:[],runs:[],tasks:[],reports:[]};
+const privateProgress = {...emptyProgress,projects:[{id:"alpha",label:"Synthetic private engine",repositoryUrl:"https://github.com/example/private-engine",visibility:"private"}]};
 const sources = ["pgx-relay", "pgx-codex", "pgx-claude", "windows-codex"];
 const sample = {
   schemaVersion: 1,
@@ -98,6 +100,7 @@ async function pageFor(
   owner = true,
   responder = () => ({ status: 200, body: sample }),
   projectFailure = false,
+  progressResponder = () => ({status:200,body:emptyProgress}),
 ) {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   page.on("pageerror", (e) => console.error("PAGE ERROR", e));
@@ -132,6 +135,10 @@ async function pageFor(
     const v = await responder();
     await r.fulfill({ status: v.status, json: v.body }).catch(() => {});
   });
+  await page.route("**/api/office/progress", async (r) => {
+    const v = await progressResponder();
+    await r.fulfill({status:v.status,json:v.body}).catch(() => {});
+  });
   await page.clock.install();
   await page.goto(base);
   return page;
@@ -146,6 +153,82 @@ async function noOverflow(page) {
   );
 }
 try {
+  // Private catalog identities never bind legacy records by string equality.
+  const collision = await pageFor(1440, true, () => ({status:200,body:sample}), false, () => ({status:200,body:privateProgress}));
+  await collision.getByText("Synthetic Alpha",{exact:true}).waitFor();
+  let publicRunCalls = 0;
+  await collision.unroute("**/api/projects/*/runs");
+  await collision.route("**/api/projects/*/runs",r => {
+    publicRunCalls++;
+    return r.fulfill({json:{runs:[{id:101,title:"Independent public issue",url:"https://github.com/example/alpha/issues/101",updatedAt:now,status:"qa"}]}});
+  });
+  await collision.getByLabel("프로젝트").selectOption("private:alpha");
+  await collision.getByText("GitHub 소스 보기",{exact:true}).waitFor();
+  assert.equal(await collision.getByText("GitHub 소스 보기",{exact:true}).getAttribute("href"),"https://github.com/example/private-engine");
+  assert.equal(await collision.locator(".roster-row").count(),0,"private id must not borrow legacy agents");
+  assert.equal(await collision.locator(".task-list").getByText("Synthetic task",{exact:false}).count(),0,"private id must not borrow legacy tasks");
+  assert.equal(await collision.getByText("확인된 작업이 없습니다.",{exact:true}).count(),1);
+  assert.equal(publicRunCalls,0,"private selection must not request public runs");
+  assert.equal(await collision.getByText("alpha 공개 작업",{exact:false}).count(),0);
+  await collision.getByLabel("프로젝트").selectOption("alpha");
+  await collision.getByText("Independent public issue",{exact:true}).waitFor();
+  assert.ok(publicRunCalls>0,"public collision identity must remain selectable");
+  assert.equal(await collision.getByText("Synthetic Alpha",{exact:true}).count(),1);
+  assert.equal(await collision.getByText("GitHub 소스 보기",{exact:true}).count(),0);
+  await collision.close();
+
+  // A catalog-only project remains selectable with no agents or tasks.
+  const zero = await pageFor(390,true,()=>({status:200,body:{...sample,agents:[],tasks:[]}}),false,()=>({status:200,body:privateProgress}));
+  await zero.getByRole("button",{name:"로그아웃"}).waitFor();
+  await zero.getByLabel("프로젝트").selectOption("private:alpha");
+  await zero.getByText("GitHub 소스 보기",{exact:true}).waitFor();
+  assert.equal(await zero.locator(".roster-row").count(),0);
+  assert.equal(await zero.getByText("확인된 작업이 없습니다.",{exact:true}).count(),1);
+  await noOverflow(zero);
+  await zero.close();
+
+  // Either private endpoint's auth failure clears the complete private view.
+  for (const status of [401,403]) {
+    let calls=0;
+    const deniedProgress=await pageFor(390,true,()=>({status:200,body:sample}),false,()=>({status:++calls<=2?200:status,body:privateProgress}));
+    await deniedProgress.getByText("Synthetic Alpha",{exact:true}).waitFor();
+    await deniedProgress.getByLabel("프로젝트").selectOption("private:alpha");
+    await deniedProgress.getByText("GitHub 소스 보기",{exact:true}).waitFor();
+    await deniedProgress.clock.fastForward(30000);
+    await deniedProgress.getByText("내 팀의 업무를 확인하세요").waitFor();
+    assert.equal(await deniedProgress.getByText("Synthetic private engine",{exact:false}).count(),0);
+    assert.equal(await deniedProgress.getByText("GitHub 소스 보기",{exact:true}).count(),0);
+    assert.equal(await deniedProgress.getByText("Synthetic Alpha",{exact:true}).count(),0);
+    assert.equal(await deniedProgress.getByLabel("프로젝트").count(),0);
+    await deniedProgress.close();
+  }
+
+  // A pending progress response completing after logout cannot restore the catalog.
+  const logoutProgress=await pageFor(1440,true,()=>({status:200,body:sample}),false,()=>({status:200,body:privateProgress}));
+  await logoutProgress.getByText("Synthetic Alpha",{exact:true}).waitFor();
+  await logoutProgress.getByLabel("프로젝트").selectOption("private:alpha");
+  await logoutProgress.getByText("GitHub 소스 보기",{exact:true}).waitFor();
+  let releaseProgress;
+  let markPending;
+  const heldProgress=new Promise(r=>releaseProgress=r);
+  const startedProgress=new Promise(r=>markPending=r);
+  await logoutProgress.unroute("**/api/office/progress");
+  await logoutProgress.route("**/api/office/progress",async r=>{
+    markPending();
+    await heldProgress;
+    await r.fulfill({json:privateProgress}).catch(()=>{});
+  });
+  await logoutProgress.clock.fastForward(30000);
+  await startedProgress;
+  await logoutProgress.getByRole("button",{name:"로그아웃"}).click();
+  releaseProgress();
+  await logoutProgress.waitForTimeout(200);
+  assert.equal(await logoutProgress.getByText("내 팀의 업무를 확인하세요").count(),1);
+  assert.equal(await logoutProgress.getByText("Synthetic private engine",{exact:false}).count(),0);
+  assert.equal(await logoutProgress.getByText("GitHub 소스 보기",{exact:true}).count(),0);
+  assert.equal(await logoutProgress.getByLabel("프로젝트").count(),0);
+  await logoutProgress.close();
+
   for (const width of [1440, 390]) {
     const out = await pageFor(width, false);
     await out.getByText("내 팀의 업무를 확인하세요").waitFor();

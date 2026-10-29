@@ -21,9 +21,11 @@ export default function OfficeDashboard() {
   const [snapshot, setSnapshot] = useState<SnapshotV1 | null>(null);
   const [project, setProject] = useState("");
   const [progress, setProgress] = useState<ProgressV1 | null>(null);
-  const privateSelection = project.startsWith("private:");
-  const privateProject = privateSelection ? progress?.projects.find((p) => "private:" + p.id === project) : undefined;
-  const projectId = privateProject?.id ?? project;
+  const selection = project.startsWith("private:")
+    ? {kind:"private" as const,id:project.slice("private:".length)}
+    : {kind:"legacy" as const,id:project};
+  const privateSelection = selection.kind === "private";
+  const privateProject = privateSelection ? progress?.projects.find((p) => p.id === selection.id) : undefined;
   const [stale, setStale] = useState(false);
   const [provider, setProvider] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -124,7 +126,7 @@ export default function OfficeDashboard() {
     snapshot?.agents
       .filter(
         (a) =>
-          (!project || a.projectId === projectId) &&
+          !privateSelection && (!selection.id || a.projectId === selection.id) &&
           (!provider || a.provider === provider),
       )
       .sort((a, b) => {
@@ -140,7 +142,7 @@ export default function OfficeDashboard() {
         return rank(b) - rank(a) || timestamp(b) - timestamp(a);
       }) ?? [];
   const tasks =
-    snapshot?.tasks.filter((t) => !project || t.projectId === projectId) ?? [];
+    snapshot?.tasks.filter((t) => !privateSelection && (!selection.id || t.projectId === selection.id)) ?? [];
   return (
     <main>
       <header className="top">
@@ -279,7 +281,7 @@ export default function OfficeDashboard() {
                           ...(snapshot?.agents.map((a) => a.projectId) ?? []),
                           ...(snapshot?.tasks.map((t) => t.projectId) ?? []),
                           ...projects.map((p) => p.name),
-                        ].filter((x): x is string => !!x && !progress?.projects.some((p) => p.id === x)),
+                        ].filter((x): x is string => !!x),
                       ),
                     ).map((p) => (
                       <option key={p}>{p}</option>
