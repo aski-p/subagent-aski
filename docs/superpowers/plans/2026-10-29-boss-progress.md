@@ -124,3 +124,12 @@ Independent lounge L1 pure selector/components may be implemented by actual Fram
 Review dispatch clarification for remaining core/extension tasks: implementer commits only its exact task files and reports BASE/HEAD/tests; root dispatches fresh reviewer against BASE..HEAD and gates integration/push/next task. Implementers never spawn their own reviewer. This ordering supersedes older task phrasing that placed fresh review before the reviewable commit; completed work is not repeated.
 
 User report presentation preference: “지금 상황 알려줘” and periodic Boss reports use a fresh verified progress chart with role-face labels plus concise completed/active/blocker/next-action explanation. Missing measurements remain —; the transport report table does not authorize fabricated percentages. The reusable Boss skill should render this verified data as charts when supported.
+
+
+## Approved chat-first execution correction
+
+The human explicitly authorized actual Codex to complete web transmission and its prerequisites while Claude is quota-blocked. This supersedes Claude-only waiting for this scope; actual provider/model attribution remains mandatory. Use Codex Sol 6.1 medium for backend/planning, Terra 6.1 for UI, Sol 6.1 for review. Preserve actual Claude assignment for remaining work when available.
+
+Execution order: reviewed core1 -> full core3 shared Ledger/capability -> W1 -> W2 -> W3 command channel and minimum core5 installation -> Frame W4 actual chat release. Then continue core4 Claude supervisor, report-specific core5, progress UI and lounge L2/L3. Do not claim full Boss completion at the earlier chat milestone. Existing security, same-Boss binding, retention, deduplication, distinct bearer, CSRF and truthful states remain unchanged.
+
+For W3, extend the existing scripts/agent-status/export-windows.py loop with an optional protected command-config hook and covering export_windows_test.py tests. Keep one existing current-user pythonw metadata task, independent metadata/command error handling, CREATE_NO_WINDOW for all children and durable command attempts; do not add a second polling runner/listener. Its installer updates that same task. Install validated original-Boss redeem/decision/reply/resume instructions and fixed PGX helper modules. Report outbox/exporter and Claude supervision may follow in their original owning tasks. Native new_task still requires same-DB command/run/dispatch intent before real spawning; no simulated activity or indefinite ack-only substitute.

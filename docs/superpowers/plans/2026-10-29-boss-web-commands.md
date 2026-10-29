@@ -87,3 +87,12 @@ Core Ledger adds `create_run_for_command(command_id:str,run:dict,tasks:list,chec
 ## Self-review
 
 Spec coverage: W1 authority/dedup/TTL/retention; W2 owner/CSRF/readwrite separation/exact URL; W3 hidden queue/redeem/classification/replies/resume; W4 composer/web-only conversation/auth/browsers/release. Five Review Focus items are tested in owning tasks. All names/receipt fields match the spec; W1 is the single receipt contract source, W2/W4 import it. Same DB transaction creates/binds new runs and records dispatch intent; received/uncertain never imply safe resend. No UI dispatch occurs before actual core controller exists, no repeated coreTask2, no early/replacement Claude. Plans are reviewed documents only; no product code/install or jobs were executed while writing them.
+
+
+## Approved chat-first execution correction
+
+The human explicitly authorized actual Codex to complete web transmission and its prerequisites while Claude is quota-blocked. This supersedes Claude-only waiting for this scope; actual provider/model attribution remains mandatory. Use Codex Sol 6.1 medium for backend/planning, Terra 6.1 for UI, Sol 6.1 for review. Preserve actual Claude assignment for remaining work when available.
+
+Execution order: reviewed core1 -> full core3 shared Ledger/capability -> W1 -> W2 -> W3 command channel and minimum core5 installation -> Frame W4 actual chat release. Then continue core4 Claude supervisor, report-specific core5, progress UI and lounge L2/L3. Do not claim full Boss completion at the earlier chat milestone. Existing security, same-Boss binding, retention, deduplication, distinct bearer, CSRF and truthful states remain unchanged.
+
+For W3, extend the existing scripts/agent-status/export-windows.py loop with an optional protected command-config hook and covering export_windows_test.py tests. Keep one existing current-user pythonw metadata task, independent metadata/command error handling, CREATE_NO_WINDOW for all children and durable command attempts; do not add a second polling runner/listener. Its installer updates that same task. Install validated original-Boss redeem/decision/reply/resume instructions and fixed PGX helper modules. Report outbox/exporter and Claude supervision may follow in their original owning tasks. Native new_task still requires same-DB command/run/dispatch intent before real spawning; no simulated activity or indefinite ack-only substitute.
