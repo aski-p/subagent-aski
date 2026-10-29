@@ -26,7 +26,7 @@ def main():
    run_once(a.registry,stage,a.cache,('windows-codex',))
    candidate=stage/'windows-codex.json'
    if candidate.is_file() and candidate.stat().st_size<=1048576:transport(candidate,a.host,a.key)
-  except (OSError,ValueError,subprocess.SubprocessError):print('windows-codex: transport_unavailable')
+  except (OSError,ValueError,AttributeError,TypeError,KeyError,subprocess.SubprocessError):print('windows-codex: transport_unavailable')
   if a.command_config:
    try:bridge_commands_once(protected_json(a.command_config))
    except (OSError,ValueError,KeyError,TypeError,AttributeError,sqlite3.Error,subprocess.SubprocessError):print('office-command: transport_unavailable')

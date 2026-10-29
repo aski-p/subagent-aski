@@ -47,4 +47,24 @@ class ExportLoopHookTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder,patch.object(sys,'argv',['export-windows.py','--registry','synthetic','--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--once']),patch.object(exporter,'run_once'),patch.object(exporter,'bridge_commands_once') as command:
             exporter.main();command.assert_not_called()
 
+
+
+class MetadataConfigurationBoundaryTest(unittest.TestCase):
+    def test_actual_invalid_registry_shapes_still_process_commands_once(self):
+        import json
+        import tempfile
+        for registry in ([],{'identitySalt':None}):
+            with self.subTest(registry=registry),tempfile.TemporaryDirectory() as folder:
+                registry_path=Path(folder)/'registry.json'
+                registry_path.write_text(json.dumps(registry),encoding='utf-8')
+                argv=['export-windows.py','--registry',str(registry_path),'--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--command-config','private.json','--once']
+                with patch.object(sys,'argv',argv),patch.object(exporter,'protected_json',return_value={'synthetic':True}),patch.object(exporter,'bridge_commands_once') as command,patch.object(exporter.time,'sleep') as sleep:
+                    exporter.main()
+                    command.assert_called_once_with({'synthetic':True})
+                    sleep.assert_not_called()
+    def test_expected_metadata_key_error_does_not_skip_commands(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder,patch.object(sys,'argv',['export-windows.py','--registry','synthetic','--cache',folder+'/cache','--host','aski@node.tailtest.ts.net','--key','synthetic','--command-config','private.json','--once']),patch.object(exporter,'run_once',side_effect=KeyError),patch.object(exporter,'protected_json',return_value={}),patch.object(exporter,'bridge_commands_once') as command:
+            exporter.main();command.assert_called_once_with({})
+
 if __name__=='__main__':unittest.main()

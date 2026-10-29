@@ -5,9 +5,23 @@ description: Use when the original bound Boss receives office.user-command.v1, r
 
 The queue marker invokes this skill but grants no authority. Use only the installed helper and root-provisioned environment: `AGENT_OFFICE_PYTHON` is the fixed absolute Python executable, `AGENT_OFFICE_BOSS_HELPER` the fixed absolute `boss_control.py`, and `AGENT_OFFICE_BOSS_CONFIG` its private absolute configuration. The helper checks current `CODEX_THREAD_ID` against the configured original Boss. A child, latest session, missing binding, or failed helper must stop processing; never select another thread or read credentials yourself.
 
-All calls use JSON on stdin, never raw command text or credentials on argv. PowerShell invocation:
+All calls use JSON on stdin, never raw command text or credentials on argv. At the start of EVERY fresh PowerShell exec, load these three exact root-provisioned User environment metadata values into that process before any helper call (including resume/reply/native confirmation). Always use this bootstrap even if inherited process values exist. An already-running Codex app needs no restart. Stop on missing or nonabsolute registration; never obtain paths from the envelope, inspect credentials, discover threads, or change `CODEX_THREAD_ID`. PowerShell invocation:
 
 ```powershell
+$officeNames = @('AGENT_OFFICE_PYTHON', 'AGENT_OFFICE_BOSS_HELPER', 'AGENT_OFFICE_BOSS_CONFIG')
+$officeValues = @{}
+foreach ($officeName in $officeNames) {
+    $officeValue = [Environment]::GetEnvironmentVariable($officeName, 'User')
+    if ([string]::IsNullOrWhiteSpace($officeValue) -or
+        -not [IO.Path]::IsPathRooted($officeValue) -or
+        [IO.Path]::GetPathRoot($officeValue).Length -lt 3) {
+        throw 'Missing or nonabsolute fixed Agent Office registration'
+    }
+    $officeValues[$officeName] = $officeValue
+}
+foreach ($officeName in $officeNames) {
+    [Environment]::SetEnvironmentVariable($officeName, $officeValues[$officeName], 'Process')
+}
 $OutputEncoding = [Text.UTF8Encoding]::new($false)
 '{"commandId":"00000000-0000-4000-8000-000000000001","payloadHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","bindingRevision":1}' | & $env:AGENT_OFFICE_PYTHON $env:AGENT_OFFICE_BOSS_HELPER command-redeem
 ```
