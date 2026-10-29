@@ -117,3 +117,10 @@ Dispatch note L1: Frame owns only its ten listed files (seven original plus thre
 Execution note: L1 implemented and independently reviewed through fd6cf93; do not redispatch. L3/final review must resolve remaining compressed-source formatting and long-label375px coverage observations before release.
 
 Task5 execution adjustment: Ruling: Task5 may minimally update tests/office-browser.mjs obsolete first-viewport roster assertion to assert shared room precedes preserved roster and roster remains reachable/visible after scroll. The approved new room intentionally precedes lists; retaining the old geometry assertion would reject the requested layout. Do not weaken auth/collision/overflow/behavior tests. Cost if wrong: test-only layout regression coverage rework. Exact task-file ownership additionally includes tests/office-browser.mjs for that assertion only.
+
+
+## Latest approved actual-Qwen handover (2026-10-30)
+
+The user's latest provider instruction supersedes prospective Claude-only assignments, reserved-Claude waits and no-provider-substitution wording for Forge (development), Scout (research) and Palette (design): these roles now require ACTUAL Qwen independent sessions reporting to the SAME original bound Codex Boss. Existing recorded Claude/Codex providers, attempts and evidence remain unchanged. Atlas/Frame/Sentinel stay actual Codex. Existing implementation/release approval, one code writer and root-dispatched fresh review remain in force.
+
+Follow [the Qwen handover addendum](2026-10-30-boss-qwen-handover.md) for exact provider contracts, supervisor/report/proof ownership, acceptance and offline/backend-wait boundaries. A role-label edit is not execution evidence. No fallback to Claude/Codex and no repeated Claude retry for these new assignments. An unavailable Qwen backend means honest queued/backend_unavailable status; do not fabricate sessions/proofs or stop another project's GPU work. Completed tasks and the original acknowledged queue probe are reused, not repeated.
