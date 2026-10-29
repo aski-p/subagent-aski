@@ -1,11 +1,12 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchOfficeSnapshot, OfficeFetchError } from "@/lib/office-browser";
+import { fetchOfficeSnapshot, fetchOfficeProgress, OfficeFetchError } from "@/lib/office-browser";
 import { Avatar, roles } from "./role-avatar";
 import { AgentDetail } from "./agent-detail";
 import { SourceCoverageView } from "./source-coverage";
 import { usePublicEvidence } from "./public-evidence";
 import type { SnapshotV1 } from "@/lib/status-contract";
+import type { ProgressV1 } from "@/lib/progress-contract";
 import { ROLES } from "@/lib/status-contract";
 
 const time = (s: string | null | undefined) =>
@@ -18,8 +19,12 @@ const time = (s: string | null | undefined) =>
 export default function OfficeDashboard() {
   const [auth, setAuth] = useState<"loading" | "out" | "owner">("loading");
   const [snapshot, setSnapshot] = useState<SnapshotV1 | null>(null);
-  const [stale, setStale] = useState(false);
   const [project, setProject] = useState("");
+  const [progress, setProgress] = useState<ProgressV1 | null>(null);
+  const privateSelection = project.startsWith("private:");
+  const privateProject = privateSelection ? progress?.projects.find((p) => "private:" + p.id === project) : undefined;
+  const projectId = privateProject?.id ?? project;
+  const [stale, setStale] = useState(false);
   const [provider, setProvider] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [visibleCount, setVisibleCount] = useState(20);
@@ -31,7 +36,7 @@ export default function OfficeDashboard() {
     runsError,
     projectsChecked,
     runsChecked,
-  } = usePublicEvidence(project);
+  } = usePublicEvidence(privateSelection ? "" : project);
   const generation = useRef(0);
   const active = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -55,6 +60,7 @@ export default function OfficeDashboard() {
     generation.current++;
     active.current?.abort();
     setSnapshot(null);
+    setProgress(null);
     setSelected(null);
     setProject("");
     setProvider("");
@@ -67,12 +73,26 @@ export default function OfficeDashboard() {
     active.current?.abort();
     const controller = new AbortController();
     active.current = controller;
-    try {
-      const data = await fetchOfficeSnapshot(controller.signal);
-      if (id === generation.current) {
-        setSnapshot(data);
-        setStale(false);
+    const privateRequest = async <T,>(request: Promise<T>): Promise<T> => {
+      try { return await request; } catch (error) {
+        if (id === generation.current && !controller.signal.aborted && error instanceof OfficeFetchError && (error.status === 401 || error.status === 403)) clearPrivate();
+        throw error;
       }
+    };
+    try {
+      const results = await Promise.allSettled([
+        privateRequest(fetchOfficeSnapshot(controller.signal)),
+        privateRequest(fetchOfficeProgress(controller.signal)),
+      ]);
+      if (id !== generation.current || controller.signal.aborted) return;
+      if (results.some((r) => r.status === "rejected" && r.reason instanceof OfficeFetchError && (r.reason.status === 401 || r.reason.status === 403))) {
+        clearPrivate();
+        return;
+      }
+      const [snapshotResult, progressResult] = results;
+      if (snapshotResult.status === "fulfilled") setSnapshot(snapshotResult.value);
+      if (progressResult.status === "fulfilled") setProgress(progressResult.value);
+      setStale(results.some((r) => r.status === "rejected"));
     } catch (error) {
       if (id !== generation.current || controller.signal.aborted) return;
       if (
@@ -104,7 +124,7 @@ export default function OfficeDashboard() {
     snapshot?.agents
       .filter(
         (a) =>
-          (!project || a.projectId === project) &&
+          (!project || a.projectId === projectId) &&
           (!provider || a.provider === provider),
       )
       .sort((a, b) => {
@@ -120,7 +140,7 @@ export default function OfficeDashboard() {
         return rank(b) - rank(a) || timestamp(b) - timestamp(a);
       }) ?? [];
   const tasks =
-    snapshot?.tasks.filter((t) => !project || t.projectId === project) ?? [];
+    snapshot?.tasks.filter((t) => !project || t.projectId === projectId) ?? [];
   return (
     <main>
       <header className="top">
@@ -250,13 +270,16 @@ export default function OfficeDashboard() {
                     }}
                   >
                     <option value="">전체 프로젝트</option>
+                    {progress?.projects.map((p) => (
+                      <option key={"private:" + p.id} value={"private:" + p.id}>{p.label} · 비공개 등록</option>
+                    ))}
                     {Array.from(
                       new Set(
                         [
                           ...(snapshot?.agents.map((a) => a.projectId) ?? []),
                           ...(snapshot?.tasks.map((t) => t.projectId) ?? []),
                           ...projects.map((p) => p.name),
-                        ].filter((x): x is string => !!x),
+                        ].filter((x): x is string => !!x && !progress?.projects.some((p) => p.id === x)),
                       ),
                     ).map((p) => (
                       <option key={p}>{p}</option>
@@ -286,6 +309,17 @@ export default function OfficeDashboard() {
                 </label>
                 <span>기준 시각 {time(snapshot?.observedAt)}</span>
               </div>
+              {progress && progress.catalogState !== "available" && (
+                <p className="warning" role="status">{progress.catalogState === "stale" ? "비공개 프로젝트 목록 갱신 실패. 마지막 정상 목록을 표시합니다." : "비공개 프로젝트 목록을 불러올 수 없습니다."}</p>
+              )}
+              {privateProject && (
+                <div className="empty">
+                  <strong>{privateProject.label}</strong>
+                  <p>등록된 비공개 프로젝트 · 확인된 작업 {progress?.runs.filter((r) => r.projectId === privateProject.id).length ?? 0}</p>
+                  <p>운영자가 등록한 목록이며 GitHub 접근 범위와는 별개입니다.</p>
+                  {privateProject.repositoryUrl && <a href={privateProject.repositoryUrl} target="_blank" rel="noreferrer noopener">GitHub 소스 보기</a>}
+                </div>
+              )}
               {stale && (
                 <p className="warning" role="status">
                   새 기록을 불러오지 못했습니다.{" "}

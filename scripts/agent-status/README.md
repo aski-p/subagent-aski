@@ -75,3 +75,15 @@ The exporter creates a local sanitized spool, `scp`s only `windows-codex.json.tm
 ## Validation / limitations
 
 `npx tsx --test tests/status-*.test.ts`; `npm run verify`. Synthetic test records contain sentinel secrets to assert raw content never survives projection. Actual source schema probes and temporary one-shot collection are separate from live runtime acceptance. A healthy collector proves collection time only; old task_started remains last observed activity and must not be described as proof of current execution. Four-source real coverage, Windows child mapping, recovery and public route checks are required in Task3/4 before reporting operational completion.
+
+## Owner runtime project catalog
+
+The bare adapter URL still returns SnapshotV1. The only additional adapter URL is authenticated GET `/agent-office-status?view=progress`; duplicate or other query parameters fail closed. Keep `STATUS_ADAPTER_URL` as the exact bare URL: the server client adds the fixed query. Owner-only `GET /api/office/progress` returns strict ProgressV1 with `Cache-Control: private, no-store`. Unauthorized requests never access the adapter.
+
+`STATUS_CATALOG_PATH` defaults to `/home/aski/agent-office-status/projects.json`. This private runtime file contains exactly `{"schemaVersion":1,"projects":[{"id":"private-example","label":"Synthetic engine","repositoryUrl":"https://github.com/example/private-engine","visibility":"private"}]}`. Actual records belong only in private runtime configuration, never source or public fixtures. IDs are opaque projections, not filesystem paths. A null repositoryUrl is allowed; otherwise it must be a canonical HTTPS GitHub repository URL without credentials, query, or fragment.
+
+Catalog registration is independent of agent activity and does not broaden GitHub OAuth permissions. Registered projects appear even with zero agents or tasks. Their owner-only source link opens GitHub using the owner's existing access. Public project/evidence APIs remain separate; private selector values never request public project runs, including when IDs overlap.
+
+`STATUS_PROGRESS_PATH` defaults to `/home/aski/agent-office-status/progress.json`. Missing progress spools yield empty runs/tasks/reports without inferring work from metadata. Malformed progress spools fail with sanitized 503. The adapter validates catalog and progress schemas and caps each input and composed response at 1 MiB. All fields are exact; IDs, field lengths, counts, enums, percentages and timestamps are bounded. The catalog is never derived from spool project rows. Missing/invalid catalog initially yields an empty unavailable catalog; after a validated read it retains that catalog in memory with state stale, including deletion. A valid empty catalog intentionally clears the list. Restart requires the private catalog to recover retained projects.
+
+The browser retains last good private results on non-auth failures. Logout, 401 or 403 invalidates pending request generations and clears catalog, progress, selection and metadata. Keep runtime directories 0700 and private catalog/spools 0600; install runtime/config separately from source.
