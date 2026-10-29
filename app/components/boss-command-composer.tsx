@@ -33,7 +33,7 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
    if(g!==generation.current||request!==historyRequest.current)return;
    updateContext(()=>({...first,receipts:[...receipts.values()].slice(0,1000),nextCursor:cursor}));
    if(cursor&&anchor&&!receipts.has(anchor)){
-    setReply(null);setMessage("최신 1,000개 기록으로 이동했습니다. 이전 요청은 기존 기록 보기에서 확인해 주세요.");
+    setMessage("최신 1,000개 기록으로 이동했습니다. 이전 요청은 기존 기록 보기에서 확인해 주세요.");
    }
   }catch(e){
    if(g!==generation.current||request!==historyRequest.current)return;
