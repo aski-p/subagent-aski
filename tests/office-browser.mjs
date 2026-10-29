@@ -154,6 +154,91 @@ async function noOverflow(page) {
   );
 }
 try {
+  // Synthetic progress exercises the real dashboard; it is not live execution evidence.
+  const lease = new Date(Date.parse(now) + 30000).toISOString();
+  const run = {id:'run-a',bossId:'boss-a',bossLabel:null,projectId:'alpha',
+    objectiveSummary:'Synthetic objective',planVersion:1,state:'working',
+    verifiedPct:30,workerPct:90,updatedAt:now};
+  const task = (id, role, provider, checkpoints) => ({
+    id,runId:'run-a',parentTaskId:null,role,provider,requestedModel:null,observedModel:'test-model',
+    state:'working',planVersion:1,verifiedPct:30,workerPct:90,blockerSummary:null,updatedAt:now,
+    checkpoints,attempts:[{id:'attempt-'+id,state:'working',observedModel:'test-model',startedAt:now,endedAt:null}],
+  });
+  const criterion = {id:'criterion',label:'Synthetic criterion',weight:1,bossOnly:false,state:'pending',evidence:[]};
+  const tasks = [task('frame-a','frame','codex',[criterion]), task('frame-b','frame','codex',[criterion]),
+    task('scout-a','scout','claude',[])];
+  const proof = {id:'proof-a',taskId:'frame-a',runId:'run-a',attemptId:'attempt-frame-a',
+    planVersion:1,provider:'codex',source:'codex-native',state:'running',confirmedAt:now,leaseExpiresAt:lease};
+  let observedAt = now;
+  const progress = () => ({...privateProgress,observedAt,runs:[run],tasks,activityProofs:[proof]});
+  const room = await pageFor(1280,true,()=>({status:200,body:sample}),false,()=>({status:200,body:progress()}));
+  let mutationPosts = 0;
+  room.on('request', request => {
+    if (request.method()==='POST' && !request.url().endsWith('/api/auth/logout')) mutationPosts++;
+  });
+  await room.locator('.agent-lounge').waitFor();
+  await room.locator('.filters select').first().selectOption('private:alpha');
+  const frameRole = room.locator('.lounge-role').filter({hasText:'Frame(UI/UX)'});
+  const scoutRole = room.locator('.lounge-role').filter({hasText:'Scout'});
+  await frameRole.locator('.lounge-avatar--working').waitFor();
+  assert.match(await frameRole.textContent(),/30%/);
+  assert.doesNotMatch(await frameRole.textContent(),/90%/);
+  assert.match(await scoutRole.textContent(),/— \/ 기준 없음/);
+  assert.equal(await scoutRole.locator('.lounge-sweat').count(),0,'proofless task stays static');
+  const frameInspector = room.locator('.lounge-inspector-row').filter({hasText:'Frame(UI/UX)'});
+  await frameInspector.locator('select').selectOption('frame-b');
+  assert.equal(await frameRole.locator('.lounge-avatar--unknown').count(),1);
+  await frameInspector.getByRole('button',{name:'작업 보기'}).click();
+  assert.match(await room.locator('.lounge-detail').textContent(),/frame-b/);
+  await room.locator('.filters select').nth(1).selectOption('Claude');
+  assert.equal(await room.locator('.lounge-detail').count(),0,'provider filter clears detail');
+  assert.equal(await frameRole.locator('.lounge-avatar--idle').count(),1);
+  assert.equal(await room.locator('.lounge-inspector-row').filter({hasText:'frame-b'}).count(),0);
+  await room.locator('.filters select').nth(1).selectOption('');
+  assert.match(await frameInspector.textContent(),/frame-a/,'filter change clears selection');
+  await room.locator('.filters select').first().selectOption('alpha');
+  assert.equal(await room.locator('.lounge-inspector-row').count(),0,'same-ID public project cannot expose private work');
+  await room.locator('.filters select').first().selectOption('private:alpha');
+  await frameRole.locator('.lounge-avatar--working').waitFor();
+  await room.getByRole('button',{name:'움직임 일시정지'}).click();
+  await room.evaluate(() => {
+    Object.defineProperty(document,'hidden',{configurable:true,value:true});
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  observedAt = new Date(Date.parse(now)+31000).toISOString();
+  const refreshed = room.waitForResponse(r => r.url().endsWith('/api/office/progress') && r.status() === 200);
+  await room.clock.fastForward(31000);
+  assert.equal((await (await refreshed).json()).observedAt, observedAt);
+  await room.evaluate(() => {
+    Object.defineProperty(document,'hidden',{configurable:true,value:false});
+    document.dispatchEvent(new Event('visibilitychange'));
+  });
+  await frameRole.locator('.lounge-avatar--unknown').waitFor();
+  assert.equal(await frameRole.locator('.lounge-sweat').count(),0,'expired proof never revives on fresh export');
+  await room.getByRole('button',{name:'움직임 재개'}).click();
+  assert.equal(await frameRole.locator('.lounge-avatar--unknown').count(),1);
+  await frameInspector.getByRole('button',{name:'작업 보기'}).click();
+  let releaseRoomProgress, markRoomPending, markRoomFinished;
+  const heldRoomProgress = new Promise(r=>releaseRoomProgress=r);
+  const roomPending = new Promise(r=>markRoomPending=r);
+  const roomFinished = new Promise(r=>markRoomFinished=r);
+  await room.unroute('**/api/office/progress');
+  await room.route('**/api/office/progress',async r => {
+    markRoomPending(); await heldRoomProgress;
+    await r.fulfill({json:progress()}).catch(()=>{});
+    markRoomFinished();
+  });
+  await room.clock.fastForward(30000);
+  await roomPending;
+  await room.getByRole('button',{name:'로그아웃'}).click();
+  releaseRoomProgress();
+  await roomFinished;
+  await room.getByText('내 팀의 업무를 확인하세요').waitFor();
+  assert.equal(await room.locator('.agent-lounge').count(),0);
+  assert.equal(await room.locator('.lounge-detail').count(),0);
+  assert.equal(mutationPosts,0,'room interactions never POST work or commands');
+  await room.close();
+
   // Private catalog identities never bind legacy records by string equality.
   const collision = await pageFor(1440, true, () => ({status:200,body:sample}), false, () => ({status:200,body:privateProgress}));
   await collision.getByText("Synthetic Alpha",{exact:true}).waitFor();

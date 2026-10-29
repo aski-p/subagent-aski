@@ -41,3 +41,24 @@ explicitly checked again with the same identifier.
 The browser fixture test intercepts synthetic API responses on the real Next page;
 it is not evidence of a deployed endpoint, native Boss work, or model execution.
 Production acceptance of that chain is a separate integration gate.
+
+### Shared office reader and presentation evidence
+
+Task 5 connects the owner-only room to the existing progress reader. The room uses
+six fixed role characters and displays work effects only when the current task,
+run plan, attempt, provider, source, and unexpired activity proof agree. A separate
+labeled preview demonstrates effects without operational records. A missing proof
+keeps a working task in execution-confirmation-waiting state; a current run plan
+must match the task plan before it can be selected or shown.
+
+Synthetic browser fixtures exercise the built dashboard, including public/private
+same-ID isolation, provider and task selection, verified versus self-reported
+percentages, proof expiration while paused and hidden, a fresh export carrying an
+old proof, and logout with a pending progress response. They also check the room
+sends no work or command POST. Component browser fixtures cover sprites, movement,
+controls, reduced motion, hidden state, and 375px layout. These tests do not prove
+a native child is alive or that a real provider executed a task.
+
+The activity proof producer, reader-first deployment, authenticated canonical
+app verification, and genuine mixed-provider execution remain separate acceptance
+gates. No operational percentage or proof is synthesized as a fallback.
