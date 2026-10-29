@@ -30,3 +30,23 @@ test("client preserves durable errors and rejects redirects, invalid, oversized 
  let calls=0;globalThis.fetch=async()=>{calls++;return Response.json({})};
  for(const token of [secret,"r".repeat(40),"short"]){process.env.STATUS_ADAPTER_COMMAND_TOKEN=token;assert.equal((await POST(request())).status,503)}assert.equal(calls,0);
  }finally{globalThis.fetch=old}});
+
+test("429 requires an explicit bounded integer Retry-After before propagation",async()=>{
+ config();const old=fetch;
+ try{
+  for(const retryAfter of [undefined,"","0","-1","1.5","3601","NaN","Infinity","23.0","1e2","+23","0x17"]){
+   globalThis.fetch=async()=>Response.json({error:"rate_limited"},{status:429,headers:retryAfter===undefined?{}:{"Retry-After":retryAfter}});
+   const response=await POST(request());
+   assert.equal(response.status,503,"invalid Retry-After: "+String(retryAfter));
+   assert.equal(response.headers.get("retry-after"),null);
+   assert.deepEqual(await response.json(),{error:"source_unavailable",outcomeUnknown:true});
+  }
+  for(const retryAfter of ["1","23","3600"]){
+   globalThis.fetch=async()=>Response.json({error:"rate_limited"},{status:429,headers:{"Retry-After":retryAfter}});
+   const response=await POST(request());
+   assert.equal(response.status,429);
+   assert.equal(response.headers.get("retry-after"),retryAfter);
+   assert.deepEqual(await response.json(),{error:"rate_limited"});
+  }
+ }finally{globalThis.fetch=old}
+});
