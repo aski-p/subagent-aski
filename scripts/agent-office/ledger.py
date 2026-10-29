@@ -294,13 +294,16 @@ class Ledger:
 
     def create_run_for_command(self, command_id:str, run:dict, tasks:list, checkpoints:list)->dict:
         """One transaction: scoped command, native run, binding and spawn intent."""
-        from commands import command_row, scope_row
+        from commands import command_row, scope_row, confirmed_command_project
         with self.transaction() as conn:
             cap=self._capability(conn)
             if cap["actor"]!="command" or cap["purpose"]!="boss-dispatch":
                 raise PermissionError("wrong_purpose")
             row=command_row(conn,command_id)
             scope_row(row,cap)
+            effective_project=confirmed_command_project(conn,row,{**dict(cap),"project_ids":json.loads(cap["project_ids"])})
+            if run.get("bossId")!=cap["boss_id"] or run.get("projectId")!=effective_project:
+                raise PermissionError("wrong_run_scope")
             payload_hash=digest(canonical([run,tasks,checkpoints]))
             if row["run_id"]:
                 intent=conn.execute("SELECT * FROM command_dispatch_intents WHERE command_id=?",(command_id,)).fetchone()
@@ -309,8 +312,6 @@ class Ledger:
                 return {"id":row["run_id"]}
             if row["received_at"] is None or row["decision"]!="new_task" or row["state"] in {"handled","closed","failed","expired"}:
                 raise ValueError("command_not_dispatchable")
-            if run.get("bossId")!=cap["boss_id"] or run.get("projectId")!=row["project_id"] or run.get("projectId") not in json.loads(cap["project_ids"]):
-                raise PermissionError("wrong_run_scope")
             result=self._create_run(run,tasks,checkpoints,command_id=command_id)
             conn.execute("UPDATE commands SET run_id=?,stage='dispatch_intent',state='queued' WHERE id=?",(result["id"],command_id))
             conn.execute("INSERT INTO command_dispatch_intents(command_id,run_id,payload_hash,state) VALUES(?,?,?,'pending')",

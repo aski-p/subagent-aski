@@ -44,6 +44,37 @@ Controller operations (each name is the final argument to the same invocation ab
 | `command-result` | `{commandId,report:{id,runId,revision,status:"pending"},planVersion,attemptIds:{taskId:actualCurrentAttemptId}}` registers W1's current execution result after observed dispatch; include ALL current tasks. Stale plan/attempt/legacy reports fail. |
 | `command-result-ack` | `{commandId,reportId,revision}` acknowledges only the registered current result binding. After actual checkpoint verification and Boss approval, repeat that same ACK if needed. Unrelated legacy result ACKs cannot finish a command. |
 
+### Confirming a project after a default-context clarification
+
+A null project means current Boss context, not authority to guess a project. For a concrete
+task lacking an explicit target, persist needs_clarification and write a clarification.
+The owner must answer from the authenticated web reply. Redeem that CHILD command first
+and read its durable continuation root objective, latest question and actual owner answer.
+If the answer explicitly confirms exactly one registered authorized project, the private
+new_task decision may add confirmedProjectId to that child's existing decision object:
+`{commandId,kind:"new_task",confirmedProjectId,run,tasks,checkpoints}`.
+Use the same allowlisted project for run.projectId. The original public projectId remains
+null; never edit the submitted input/hash or the pinned same-project reply relationship.
+The server records separate provenance/confirmation and binds run+intent atomically.
+
+The command must be a redeemed null-project clarification answer with server continuation
+provenance. An initial null request cannot use confirmedProjectId, and a non-null input
+cannot be overridden. Never add this field to query, needs_clarification or revise_run.
+A public/browser command cannot supply it. The current private dispatch capability's
+registered project allowlist is authoritative; dashboard filters/latest activity/GitHub
+repository discovery are not project authorization. Do not read new public runtime paths.
+
+The actual owner answer is required: do not treat the presence of continuation as consent.
+If the answer is ambiguous, implied, or does not confirm a project, ask another clarification;
+the next authenticated child can continue the same bounded root/latest-question context.
+Do not classify a guess as explicit confirmation. Once confirmed, retry the identical
+decision, including confirmedProjectId, run and task IDs. A different confirmation conflicts.
+On restart, use command-context and the persisted plan/run; do not resolve again or spawn
+a second run. Server provenance survives parent retention; no need to re-open an old parent.
+Pre-upgrade continuations lacking server provenance fail closed; do not invent provenance
+or modify private DB records to bypass that rejection.
+
+
 Native collaboration is a root tool action, never a shell string constructed by this helper. Persist intent, call the actual tool only on a fresh permit, save its actual identity. A crash between spawn and save remains uncertain until reconciliation; never blindly spawn again. If unavailable, write a bounded ACK and recover on the next resume instead of claiming execution.
 
 `office.result-report.v1` is the separate result channel. Command text cannot invoke its ACK. Metadata/report polling authorizes no new work, and queue exit 0 means queued only. Percentages follow accepted ledger checkpoints, never message arrival, time, or acknowledgements.

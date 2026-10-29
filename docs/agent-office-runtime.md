@@ -45,3 +45,28 @@ explicitly checked again with the same identifier.
 The browser fixture test intercepts synthetic API responses on the real Next page;
 it is not evidence of a deployed endpoint, native Boss work, or model execution.
 Production acceptance of that chain is a separate integration gate.
+
+
+### Reviewed default-context project resolution
+
+Owner commands retain their original public projectId/input hash, including null.
+After a null-project clarification answer is authenticated and redeemed, the original
+bound Boss may include confirmedProjectId only in the private new_task decision.
+The Boss must read an explicit owner confirmation of one project in that answer;
+ambiguity requires another clarification. The existing registered dispatch capability
+project allowlist is authoritative, with run.projectId equal to the confirmed project.
+Browser filters, repository discovery and initial null text confer no target authority.
+
+The inbox stores compact private continuation provenance on redeem and a separate
+confirmation bound to the immutable decision hash. Confirmation, native run binding and
+dispatch intent share one SQLite transaction. Ledger independently checks that persisted
+effective project and current scope even on direct calls/retries. Parent retention does
+not invalidate an already redeemed active child's provenance. Non-null overrides and
+confirmation on query/clarification/revise are rejected. Pre-upgrade children without
+provenance fail closed; operators must not fabricate records to bypass it.
+
+Receipt GET now starts with the most recent50 records and owner-bound opaque cursors walk
+toward older sequence IDs. New submissions do not shift an existing older-page boundary.
+The composer refreshes its loaded pages with current server state by receipt ID, bounded
+to20 pages/1,000 records per mount, and generation-fences obsolete refresh completions.
+This does not expand the separate50-original authenticated memory map or public projection.

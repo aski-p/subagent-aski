@@ -46,6 +46,9 @@ CommandStore(sys.argv[1])
  await new Promise<void>(r=>server.listen(0,"127.0.0.1",r));const address=server.address() as AddressInfo,url="http://127.0.0.1:"+address.port+"/agent-office-status?view=commands";
  try{let first;for(const status of [202,200]){const r=await fetch(url,{method:"POST",headers:{authorization:"Bearer "+write,"content-type":"application/json"},body:JSON.stringify({actor:69686315,input})});assert.equal(r.status,status);const body=await r.json();first??=body.receipt;assert.deepEqual(body.receipt,first);assert.equal(body.replayed,status===200);
  const check=execFileSync("/usr/bin/python3",["-c","import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('select count(*) from commands').fetchone()[0])",db],{encoding:"utf8"});assert.equal(check.trim(),"1");}
+ const equivalent=await fetch(url,{method:"POST",headers:{authorization:"Bearer "+write,"content-type":"application/json"},body:JSON.stringify({actor:69686315,input:{...input,clientRequestId:"22345678-1234-4234-8234-123456789012"}})});
+ assert.equal(equivalent.status,409);assert.deepEqual(await equivalent.json(),{error:"equivalent_pending",existingReceiptId:first.id});
+ const check=execFileSync("/usr/bin/python3",["-c","import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('select count(*) from commands').fetchone()[0])",db],{encoding:"utf8"});assert.equal(check.trim(),"1");
  const r=await fetch(url,{headers:{authorization:"Bearer "+read}}),body=await r.json();assert.equal(body.receipts.length,1);assert(!JSON.stringify(body).includes("hello"));assert(!JSON.stringify(body).includes("synthetic-boss"));
  }finally{await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true})}});
 test("helper timeout and oversized/invalid stdout remain safe unknown outcomes",async()=>{const dir=await mkdtemp(join(tmpdir(),"command-bounds-")),helper=join(dir,"helper.py");
@@ -67,3 +70,17 @@ print('{"purgedPayloads":0,"purgedReceipts":0}')
  try{for(const method of ["GET","POST"]){const r=await fetch(url,{method,headers:{authorization:"Bearer "+(method==="GET"?read:write)}});assert.equal(r.status,503);assert.deepEqual(await r.json(),{error:"commands_disabled"})}
  for(let i=0;i<20;i++){try{assert.equal(await readFile(marker,"utf8"),"purged");break}catch{if(i===19)throw Error("private maintenance did not tick");await new Promise(r=>setTimeout(r,10))}}
  }finally{await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true})}});
+
+
+test("equivalent helper errors require exactly one valid original opaque receipt UUID",async()=>{
+ const dir=await mkdtemp(join(tmpdir(),"command-equivalent-")),helper=join(dir,"helper.py");
+ await writeFile(helper,'import sys,json\nv=json.load(sys.stdin)\nd={"error":"equivalent_pending","status":409}\nif v["input"]["text"]!="missing":d["existingReceiptId"]=v["input"]["text"]\nif v["input"]["text"]=="extra":d.update(existingReceiptId="12345678-1234-4234-8234-123456789012",raw="private")\nprint(json.dumps(d));sys.exit(1)\n');
+ const server=createServer({spoolDir:dir,token:read,commandToken:write,commandsEnabled:true,commandDbPath:join(dir,"db"),commandCapabilityFile:join(dir,"cap"),commandHelperPath:helper});
+ await new Promise<void>(r=>server.listen(0,"127.0.0.1",r));
+ const url="http://127.0.0.1:"+(server.address() as AddressInfo).port+"/agent-office-status?view=commands";
+ try{for(const text of ["missing","native-private","/private/path","extra","12345678-1234-4234-8234-123456789012"]){
+  const response=await fetch(url,{method:"POST",headers:{authorization:"Bearer "+write,"content-type":"application/json"},body:JSON.stringify({actor:69686315,input:{...input,text}})});
+  if(text===receipt.id){assert.equal(response.status,409);assert.deepEqual(await response.json(),{error:"equivalent_pending",existingReceiptId:text})}
+  else {assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:"source_unavailable",outcomeUnknown:true})}
+ }}finally{await new Promise<void>(r=>server.close(()=>r()));await rm(dir,{recursive:true,force:true})}
+});

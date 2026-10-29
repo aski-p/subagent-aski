@@ -12,24 +12,57 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
  const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const [retryAt,setRetryAt]=useState(0);const [clock,setClock]=useState(0);
  const [frozen,setFrozen]=useState<CommandInput|null>(null);const [unknown,setUnknown]=useState(false);const [existing,setExisting]=useState<string|null>(null);
  const generation=useRef(0);const lock=useRef(false);const composing=useRef(false);const input=useRef<HTMLTextAreaElement>(null);
- const refresh=useCallback(async()=>{const g=generation.current;try{const c=await fetchCommandContext();if(g===generation.current)setContext(c)}catch(e){if(g!==generation.current)return;if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}else setMessage("대화 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.")}},[onAuthFailure]);
+ const history=useRef<CommandContext|null>(null);const historyRequest=useRef(0);
+ const updateContext=useCallback((update:(current:CommandContext|null)=>CommandContext|null)=>{
+  setContext(current=>{const next=update(current);history.current=next;return next});
+ },[]);
+ const refresh=useCallback(async()=>{
+  const g=generation.current,request=++historyRequest.current,previous=history.current;
+  const anchor=previous?.receipts.at(-1)?.id;
+  const minimumPages=Math.max(1,Math.ceil((previous?.receipts.length??0)/50));
+  try{
+   const first=await fetchCommandContext();let cursor=first.nextCursor,pages=1;
+   const receipts=new Map(first.receipts.map(r=>[r.id,r]));const visited=new Set<string>();
+   while(cursor&&pages<20&&(pages<minimumPages||!!anchor&&!receipts.has(anchor))){
+    if(visited.has(cursor))throw Error("cursor_cycle");visited.add(cursor);
+    const page=await fetchCommandContext(undefined,cursor);
+    if(g!==generation.current||request!==historyRequest.current)return;
+    for(const r of page.receipts)receipts.set(r.id,r);
+    if(page.nextCursor===cursor)throw Error("cursor_cycle");cursor=page.nextCursor;pages++;
+   }
+   if(g!==generation.current||request!==historyRequest.current)return;
+   updateContext(()=>({...first,receipts:[...receipts.values()].slice(0,1000),nextCursor:cursor}));
+   if(cursor&&anchor&&!receipts.has(anchor)){
+    setReply(null);setMessage("최신 1,000개 기록으로 이동했습니다. 이전 요청은 기존 기록 보기에서 확인해 주세요.");
+   }
+  }catch(e){
+   if(g!==generation.current||request!==historyRequest.current)return;
+   if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}
+   else setMessage("대화 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.");
+  }
+ },[onAuthFailure,updateContext]);
  useEffect(()=>{const guard=generation;const first=setTimeout(()=>void refresh(),0);const timer=setInterval(()=>void refresh(),15000);return()=>{guard.current++;clearTimeout(first);clearInterval(timer)}},[refresh]);
  useEffect(()=>{if(!retryAt)return;const t=setInterval(()=>setClock(Date.now()),1000);return()=>clearInterval(t)},[retryAt]);
  const remaining=Math.max(0,Math.ceil((retryAt-clock)/1000));
- const findExisting=async(id:string)=>{
-  const g=generation.current;let cursor=context?.nextCursor??null;let found=context?.receipts.some(r=>r.id===id)??false;
-  const visited=new Set<string>();const collected:CommandContext["receipts"]=[];
+ const loadOlder=async(target?:string)=>{
+  const current=history.current;if(!current)return;
+  const g=generation.current,request=++historyRequest.current;
+  let cursor=current.nextCursor,found=!!target&&current.receipts.some(r=>r.id===target);
+  const receipts=new Map(current.receipts.map(r=>[r.id,r])),visited=new Set<string>();
   try{
-   while(!found&&cursor&&visited.size<20){
-    if(visited.has(cursor))break;visited.add(cursor);
-    const page=await fetchCommandContext(undefined,cursor);if(g!==generation.current)return;
-    collected.push(...page.receipts);found=page.receipts.some(r=>r.id===id);cursor=page.nextCursor;
+   while(!found&&cursor&&receipts.size<1000&&visited.size<20){
+    if(visited.has(cursor))throw Error("cursor_cycle");visited.add(cursor);
+    const page=await fetchCommandContext(undefined,cursor);
+    if(g!==generation.current||request!==historyRequest.current)return;
+    for(const r of page.receipts)receipts.set(r.id,r);
+    if(page.nextCursor===cursor)throw Error("cursor_cycle");cursor=page.nextCursor;found=!!target&&receipts.has(target);
+    if(!target)break;
    }
-   if(g!==generation.current)return;
-   setContext(c=>{if(!c)return c;const ids=new Set(c.receipts.map(r=>r.id));const added=collected.filter(r=>{if(ids.has(r.id))return false;ids.add(r.id);return true});return {...c,nextCursor:cursor,receipts:[...c.receipts,...added]}});
-   if(found)setTimeout(()=>{if(g===generation.current)document.getElementById("command-"+id)?.scrollIntoView({block:"nearest"})},0);
-   else setMessage("기존 요청을 찾지 못했습니다. 기록을 새로고침해 주세요.");
-  }catch(e){if(g!==generation.current)return;if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}else setMessage("기존 기록을 불러오지 못했습니다. 다시 시도해 주세요.")}
+   if(g!==generation.current||request!==historyRequest.current)return;
+   updateContext(c=>c?{...c,nextCursor:cursor,receipts:[...receipts.values()].slice(0,1000)}:c);
+   if(target&&found)setTimeout(()=>{if(g===generation.current)document.getElementById("command-"+target)?.scrollIntoView({block:"nearest"})},0);
+   else if(target)setMessage("최근 1,000개 기록에서 기존 요청을 찾지 못했습니다. 기록을 새로고침해 주세요.");
+  }catch(e){if(g!==generation.current||request!==historyRequest.current)return;if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}else setMessage("이전 기록을 불러오지 못했습니다. 다시 시도해 주세요.")}
  };
  const submit=async()=>{
   if(lock.current||busy||!context||remaining>0)return;
@@ -41,7 +74,7 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
   setFrozen(payload);lock.current=true;setBusy(true);setMessage("");setExisting(null);const g=generation.current;
   try{const receipt=await sendBossCommand(payload,context.csrfToken);if(g!==generation.current)return;
    setOriginals(current=>Object.fromEntries([...Object.entries(current).filter(([id])=>id!==receipt.id),[receipt.id,payload.text]].slice(-50)));
-   setContext(c=>c?{...c,receipts:[receipt,...c.receipts.filter(r=>r.id!==receipt.id)]}:c);setDraft("");setReply(null);setFrozen(null);setUnknown(false);setMessage("요청이 접수되었습니다.");void refresh();
+   historyRequest.current++;updateContext(c=>c?{...c,receipts:[receipt,...c.receipts.filter(r=>r.id!==receipt.id)].slice(0,1000)}:c);setDraft("");setReply(null);setFrozen(null);setUnknown(false);setMessage("요청이 접수되었습니다.");void refresh();
   }catch(e){if(g!==generation.current)return;
    if(e instanceof CommandFetchError){
     if(e.status===403&&e.code==="csrf_expired"){setMessage("다시 확인한 뒤 같은 요청을 보내 주세요.");await refresh()}
@@ -57,10 +90,10 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
  return <section className="boss-chat" aria-labelledby="boss-title">
   <div className="boss-chat-head"><span className="boss-face" aria-hidden="true">👑🙂</span><div><h2 id="boss-title">Boss(총괄)</h2><p>질문과 요청을 남기고 답변을 확인하세요.</p></div><button className="boss-refresh" type="button" onClick={()=>void refresh()}>기록 새로고침</button></div>
   <CommandReceipts receipts={context?.receipts??[]} originals={originals} onReply={id=>{const parent=context?.receipts.find(r=>r.id===id);if(!busy&&!unknown&&parent){setProject(parent.projectId);setReply(id);input.current?.focus()}}}/>
-  {context?.nextCursor&&<button className="boss-refresh" type="button" onClick={async()=>{const g=generation.current;try{const page=await fetchCommandContext(undefined,context.nextCursor!);if(g===generation.current)setContext(c=>c?{...c,nextCursor:page.nextCursor,receipts:[...c.receipts,...page.receipts.filter(r=>!c.receipts.some(old=>old.id===r.id))]}:c)}catch(e){if(g!==generation.current)return;if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}else setMessage("이전 기록을 불러오지 못했습니다.")}}}>이전 기록 더 보기</button>}
+  {context?.nextCursor&&context.receipts.length<1000&&<button className="boss-refresh" type="button" onClick={()=>void loadOlder()}>이전 기록 더 보기</button>}
   <div className="boss-compose-meta"><label>대상 프로젝트 <select value={project??""} disabled={unknown||busy||!!reply} onChange={e=>setProject(e.target.value||null)}><option value="">현재 Boss</option>{project&&!projects.some(p=>p.id===project)&&<option value={project}>연결된 프로젝트</option>}{projects.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select></label>{reply&&<span>이어 답변 중 <button type="button" disabled={unknown||busy} onClick={()=>setReply(null)}>취소</button></span>}</div>
   <div className="boss-compose"><textarea ref={input} aria-label="Boss에게 보낼 내용" placeholder="질문이나 요청을 입력하세요" value={draft} disabled={unknown||busy} maxLength={8000} onChange={e=>setDraft(e.target.value)} onCompositionStart={()=>{composing.current=true}} onCompositionEnd={()=>{composing.current=false}} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)&&!composing.current&&!e.nativeEvent.isComposing&&e.nativeEvent.keyCode!==229){e.preventDefault();void submit()}}}/><button type="button" className="boss-send" aria-label={unknown?"같은 요청으로 확인":"요청 보내기"} disabled={busy||!context||remaining>0||!draft.trim()} onClick={()=>void submit()}>{busy?"…":"↑"}</button></div>
   <div className="boss-hint"><span>Enter 줄바꿈 · Ctrl / ⌘ + Enter 보내기</span><span>{[...draft].length} / 4000</span></div>
-  <p className="boss-status" role="status">{remaining?retryAt&&`${remaining}초 후 다시 시도할 수 있습니다.`:message}{existing&&<> <a href={"#command-"+existing} onClick={e=>{e.preventDefault();void findExisting(existing)}}>기존 요청 보기</a></>}</p>
+  <p className="boss-status" role="status">{remaining?retryAt&&`${remaining}초 후 다시 시도할 수 있습니다.`:message}{existing&&<> <a href={"#command-"+existing} onClick={e=>{e.preventDefault();void loadOlder(existing)}}>기존 요청 보기</a></>}</p>
  </section>;
 }

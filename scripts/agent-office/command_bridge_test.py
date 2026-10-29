@@ -228,7 +228,7 @@ class ClarificationLifecycleTest(unittest.TestCase):
         later=self.submit(self.data('corrected answer',parent=parent['id']),86406)
         self.assertNotEqual(later['id'],child['id'])
         with self.assertRaises(fixtures.CommandError):self.store.redeem(self.caps['boss-redeem'],child['id'],claim['payloadHash'],at(86407))
-        self.assertEqual(self.store.receipts('owner',None)['receipts'][0]['state'],'awaiting_input')
+        self.assertEqual(next(r['state'] for r in self.store.receipts('owner',None)['receipts'] if r['id']==parent['id']),'awaiting_input')
 
 
 

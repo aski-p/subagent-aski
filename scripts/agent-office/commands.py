@@ -35,6 +35,14 @@ CREATE INDEX IF NOT EXISTS commands_equivalence ON commands(owner_id,binding_id,
 CREATE TABLE IF NOT EXISTS command_tombstones (
  owner_id TEXT NOT NULL, client_id TEXT NOT NULL, payload_hash TEXT NOT NULL,
  command_id TEXT NOT NULL, binding_id TEXT NOT NULL, boss_id TEXT NOT NULL, terminal_state TEXT NOT NULL, PRIMARY KEY(owner_id,client_id));
+CREATE TABLE IF NOT EXISTS command_continuation_provenance (
+ command_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, root_id TEXT NOT NULL,
+ owner_id TEXT NOT NULL, binding_id TEXT NOT NULL, boss_id TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, parent_hash TEXT NOT NULL, root_hash TEXT NOT NULL,
+ continuation_hash TEXT NOT NULL, project_id TEXT, redeemed_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS command_project_confirmations (
+ command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, decision_hash TEXT NOT NULL,
+ payload_hash TEXT NOT NULL, continuation_hash TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS command_resume_cursors (
  owner_id TEXT NOT NULL, binding_id TEXT NOT NULL, boss_id TEXT NOT NULL,
  after_sequence INTEGER NOT NULL, PRIMARY KEY(owner_id,binding_id,boss_id));
@@ -107,6 +115,31 @@ def command_row(conn,command_id):
 def scope_row(row,cap):
     if any(row[field]!=cap[field] for field in ("owner_id","binding_id","boss_id")):
         raise PermissionError("wrong_scope")
+
+def confirmed_command_project(conn,row,cap):
+    """Independent persisted effective-project check, also used by direct Ledger calls."""
+    scope_row(row,cap)
+    if row["project_id"] is not None:
+        if conn.execute("SELECT 1 FROM command_project_confirmations WHERE command_id=?",(row["id"],)).fetchone():
+            raise PermissionError("project_override")
+        project=row["project_id"]
+    else:
+        confirmation=conn.execute("SELECT * FROM command_project_confirmations WHERE command_id=?",(row["id"],)).fetchone()
+        provenance=conn.execute("SELECT * FROM command_continuation_provenance WHERE command_id=?",(row["id"],)).fetchone()
+        if confirmation is None or provenance is None:
+            raise PermissionError("project_confirmation_required")
+        scope_row(provenance,cap)
+        if (row["received_at"] is None or row["parent_id"] is None or row["decision"]!="new_task"
+            or provenance["parent_id"]!=row["parent_id"] or provenance["payload_hash"]!=row["payload_hash"]
+            or provenance["project_id"] is not None or confirmation["payload_hash"]!=row["payload_hash"]
+            or confirmation["decision_hash"]!=row["decision_hash"]
+            or confirmation["continuation_hash"]!=provenance["continuation_hash"]):
+            raise PermissionError("invalid_project_confirmation")
+        project=confirmation["project_id"]
+    if project not in cap["project_ids"]:
+        raise PermissionError("unauthorized_project")
+    return project
+
 
 def receipt(row):
     return {"id":row["id"],"projectId":row["project_id"],"summary":"Owner command",
@@ -234,24 +267,24 @@ class CommandStore:
         """Trusted read adapter only; CLI derives owner from verified web credential."""
         key(owner_id)
         if type(limit) is not int or not 1<=limit<=50: raise ValueError("invalid_limit")
-        after=0
+        before=9223372036854775807
         if cursor is not None:
             if not isinstance(cursor,str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}",cursor):
                 raise ValueError("invalid_cursor")
             try:
                 decoded=json.loads(base64.urlsafe_b64decode(cursor+"="*(-len(cursor)%4)))
-                exact(decoded,("owner","after"))
-                if decoded["owner"]!=digest(owner_id) or type(decoded["after"]) is not int or decoded["after"]<0:
+                exact(decoded,("owner","before"))
+                if decoded["owner"]!=digest(owner_id) or type(decoded["before"]) is not int or not 0<decoded["before"]<=9223372036854775807:
                     raise ValueError("invalid_cursor")
-                after=decoded["after"]
+                before=decoded["before"]
             except Exception: raise ValueError("invalid_cursor") from None
         with self._private_transaction() as conn:
-            rows=conn.execute("SELECT * FROM commands WHERE owner_id=? AND sequence>? ORDER BY sequence LIMIT ?",
-                              (owner_id,after,limit+1)).fetchall()
+            rows=conn.execute("SELECT * FROM commands WHERE owner_id=? AND sequence<? ORDER BY sequence DESC LIMIT ?",
+                              (owner_id,before,limit+1)).fetchall()
             page=rows[:limit]
             next_cursor=None
             if len(rows)>limit:
-                next_cursor=base64.urlsafe_b64encode(canonical({"owner":digest(owner_id),"after":page[-1]["sequence"]}).encode()).decode().rstrip("=")
+                next_cursor=base64.urlsafe_b64encode(canonical({"owner":digest(owner_id),"before":page[-1]["sequence"]}).encode()).decode().rstrip("=")
             result={"receipts":[receipt(r) for r in page],"nextCursor":next_cursor}
             canonical(result)
             return result
@@ -344,6 +377,11 @@ class CommandStore:
                     encoded=json.dumps(continuation,ensure_ascii=False,separators=(",",":"))
                     if len(encoded.encode())>65536:raise ValueError("continuation_too_large")
                     conn.execute("UPDATE commands SET continuation_context=? WHERE id=?",(encoded,row["id"]))
+                    conn.execute("""INSERT INTO command_continuation_provenance
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                        (row["id"],parent["id"],root["commandId"],row["owner_id"],row["binding_id"],
+                         row["boss_id"],row["payload_hash"],parent["payload_hash"],root["payloadHash"],
+                         digest(canonical(continuation)),row["project_id"],now))
                 # Private response only, for the authenticated original Boss.
                 result={"commandId":row["id"],"payloadHash":row["payload_hash"],
                         "input":json.loads(row["raw_input"]),"receipt":receipt(row)}
@@ -355,12 +393,12 @@ class CommandStore:
         return result
 
     def record_decision(self,boss_capability:dict,decision:dict)->dict:
-        exact(decision,("commandId","kind","now"),("run","tasks","checkpoints","runId"))
+        exact(decision,("commandId","kind","now"),("run","tasks","checkpoints","runId","confirmedProjectId"))
         now=iso(time_value(decision["now"]))
         kind=decision["kind"]
         if kind not in {"query","new_task","revise_run","needs_clarification"}: raise ValueError("invalid_decision")
         fields=("run","tasks","checkpoints") if kind=="new_task" else ("runId",) if kind=="revise_run" else ()
-        exact(decision,("commandId","kind","now",*fields))
+        exact(decision,("commandId","kind","now",*fields),("confirmedProjectId",) if kind=="new_task" else ())
         with self._authorized(boss_capability,"boss-dispatch") as (ledger,conn,cap):
             row=command_row(conn,decision["commandId"]);scope_row(row,cap)
             fingerprint=digest(canonical({k:v for k,v in decision.items() if k!="now"}))
@@ -372,6 +410,25 @@ class CommandStore:
             conn.execute("UPDATE commands SET decision=?,decision_hash=?,stage='classified',updated_at=? WHERE id=?",
                          (kind,fingerprint,now,row["id"]))
             if kind=="new_task":
+                if "confirmedProjectId" in decision:
+                    if row["project_id"] is not None or row["parent_id"] is None or row["continuation_context"] is None:
+                        raise PermissionError("clarification_confirmation_required")
+                    project=key(decision["confirmedProjectId"])
+                    provenance=conn.execute("SELECT * FROM command_continuation_provenance WHERE command_id=?",(row["id"],)).fetchone()
+                    if provenance is None:
+                        raise PermissionError("redeemed_continuation_required")
+                    scope_row(provenance,cap)
+                    continuation=json.loads(row["continuation_context"])
+                    if (provenance["payload_hash"]!=row["payload_hash"] or provenance["parent_id"]!=row["parent_id"]
+                        or provenance["project_id"] is not None
+                        or provenance["continuation_hash"]!=digest(canonical(continuation))
+                        or continuation["question"]["commandId"]!=row["parent_id"]
+                        or continuation["root"]["input"]["projectId"] is not None):
+                        raise PermissionError("invalid_confirmation_context")
+                    if project not in cap["project_ids"] or decision["run"].get("projectId")!=project:
+                        raise PermissionError("unauthorized_project")
+                    conn.execute("INSERT INTO command_project_confirmations VALUES(?,?,?,?,?)",
+                                 (row["id"],project,fingerprint,row["payload_hash"],provenance["continuation_hash"]))
                 ledger.create_run_for_command(row["id"],decision["run"],decision["tasks"],decision["checkpoints"])
             elif kind=="revise_run":
                 # Explicit existing scope, no plan overwrite or pretend child execution.
@@ -462,6 +519,8 @@ class CommandStore:
                     (row["owner_id"],row["client_id"],row["payload_hash"],row["id"],row["binding_id"],row["boss_id"],row["state"]))
                 conn.execute("DELETE FROM command_dispatch_intents WHERE command_id=?",(row["id"],))
                 conn.execute("DELETE FROM command_revisions WHERE command_id=?",(row["id"],))
+                conn.execute("DELETE FROM command_project_confirmations WHERE command_id=?",(row["id"],))
+                conn.execute("DELETE FROM command_continuation_provenance WHERE command_id=?",(row["id"],))
                 conn.execute("DELETE FROM commands WHERE id=?",(row["id"],))
                 removed+=1
             return {"purgedPayloads":cleared,"purgedReceipts":removed}

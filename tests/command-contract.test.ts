@@ -10,7 +10,7 @@ const receipt={id,projectId:null,summary:"Owner command",state:"accepted",proces
 test("strict input trims Unicode codepoints and rejects authority and oversized bytes",()=>{
  assert.equal(parseCommandInput(input).text,"question");
  assert.equal(parseCommandInput({...input,text:"😀".repeat(4000)}).text.length,8000);
- for(const value of [{...input,actor:"boss"},{...input,text:"\0"},{...input,text:" "},
+ for(const value of [{...input,actor:"boss"},{...input,confirmedProjectId:"catalog-project"},{...input,text:"\0"},{...input,text:" "},
  {...input,text:"😀".repeat(4001)},{...input,clientRequestId:"native-session"},{...input,replyToCommandId:null},
  {...input,schemaVersion:true}])assert.throws(()=>parseCommandInput(value));
 });

@@ -145,14 +145,14 @@ class CommandsTest(unittest.TestCase):
         r2=self.submit(self.data("possible send"),250)
         self.store.claim(self.caps["bridge-claim"],at(250))
         self.assertIsNone(self.store.claim(self.caps["bridge-claim"],at(400)))
-        self.assertEqual(self.store.receipts("owner",None)["receipts"][-1]["state"],"uncertain")
+        self.assertEqual(self.store.receipts("owner",None)["receipts"][0]["state"],"uncertain")
 
     def test_ttl_received_and_expired_redeem(self):
         r=self.submit(); c=self.store.claim(self.caps["bridge-claim"],at())
         self.error("already_processed",lambda:self.store.redeem(self.caps["boss-redeem"],r["id"],c["payloadHash"],at(86400)))
         r2=self.submit(self.data("received"),86401); self.receive(r2,86401)
         self.store.purge(at(200000))
-        self.assertEqual(self.store.receipts("owner",None)["receipts"][-1]["state"],"received")
+        self.assertEqual(self.store.receipts("owner",None)["receipts"][0]["state"],"received")
 
     def test_new_run_atomic_and_retry_query_has_no_run(self):
         r=self.submit(self.data(project="catalog-project")); self.receive(r)
@@ -168,7 +168,7 @@ class CommandsTest(unittest.TestCase):
         self.assertEqual(receipt["processingStage"],"dispatch_intent")
         q=self.submit(self.data("question"),4); self.receive(q,4); self.decision(q,"query",6); self.reply(q,sec=7)
         self.assertEqual(conn.execute("select count(*) from runs").fetchone()[0],1)
-        self.assertIsNone(self.store.receipts("owner",None)["receipts"][-1]["runId"])
+        self.assertIsNone(self.store.receipts("owner",None)["receipts"][0]["runId"])
         bad=self.submit(self.data("bad task",project="catalog-project"),8);self.receive(bad,8)
         with self.assertRaises(ValueError): self.decision(bad,"new_task",10,run={**run,"id":"bad-run"},tasks=tasks,checkpoints=[])
         self.assertEqual(conn.execute("select count(*) from runs").fetchone()[0],1)
@@ -506,5 +506,129 @@ class CommandsTest(unittest.TestCase):
             self.assertIsNone(conn.execute("SELECT result_sequence FROM commands WHERE id=?",(r["id"],)).fetchone()[0])
         self.boss.enqueue_command_result(r["id"],report,1,{tid:"result-attempt-rollback-result"})
         self.assertEqual(self.state_for(r["id"]),"started")
+
+    def test_receipts_recent_first_stable_older_pages_after_new_submission(self):
+        ids=[]
+        for i in range(55):
+            r=self.submit(self.data("history "+str(i)),i*130);self.receive(r,i*130)
+            ids.append(r["id"])
+        first=self.store.receipts("owner",None)
+        self.assertEqual([r["id"] for r in first["receipts"]],list(reversed(ids[-50:])))
+        cursor=first["nextCursor"]
+        newer=self.submit(self.data("new current"),55*130)
+        older=self.store.receipts("owner",cursor)
+        self.assertEqual([r["id"] for r in older["receipts"]],list(reversed(ids[:5])))
+        self.assertIsNone(older["nextCursor"])
+        self.assertEqual(self.store.receipts("owner",None)["receipts"][0]["id"],newer["id"])
+        self.assertEqual(len({r["id"] for r in first["receipts"]+older["receipts"]}),55)
+        with self.assertRaises(ValueError):self.store.receipts("foreign",cursor)
+
+    def null_project_answer(self,multi=False):
+        root=self.submit(self.data("owner objective"));self.receive(root)
+        self.decision(root,"needs_clarification");self.reply(root,"clarification")
+        child=self.submit(self.data("please clarify target" if multi else "I explicitly confirm catalog-project",parent=root["id"]),4)
+        self.receive(child,4)
+        if multi:
+            self.decision(child,"needs_clarification",6);self.reply(child,"clarification",7)
+            child=self.submit(self.data("I explicitly confirm catalog-project",parent=child["id"]),8)
+            self.receive(child,8)
+        return root,child
+
+    def resolved_plan(self,r,project="catalog-project"):
+        suffix=r["id"][:8]
+        return {"commandId":r["id"],"kind":"new_task","now":at(12),"confirmedProjectId":project,
+                "run":{"id":"resolved-run-"+suffix,"bossId":"synthetic-boss","projectId":project,"planVersion":1},
+                "tasks":[{"id":"resolved-task-"+suffix,"provider":"codex"}],
+                "checkpoints":[{"id":"resolved-final-"+suffix,"taskId":"resolved-task-"+suffix,"weight":1,"bossOnly":True}]}
+
+    def test_confirmed_null_answer_atomic_restart_retention_and_one_intent(self):
+        root,child=self.null_project_answer(multi=True)
+        self.store.purge(at(31*86400))
+        store=CommandStore(self.db);decision=self.resolved_plan(child)
+        decision["now"]=at(31*86400+1)
+        def apply(_):return CommandStore(self.db).record_decision(self.caps["boss-dispatch"],decision)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+            receipts=list(pool.map(apply,range(3)))
+        self.assertEqual(len({r["runId"] for r in receipts}),1)
+        self.assertTrue(all(r["projectId"] is None for r in receipts))
+        ledger=Ledger(self.db,self.caps["boss-dispatch"]["capabilityFile"])
+        self.assertEqual(ledger.create_run_for_command(child["id"],decision["run"],decision["tasks"],decision["checkpoints"])["id"],decision["run"]["id"])
+        with store._private_transaction() as conn:
+            row=conn.execute("SELECT * FROM commands WHERE id=?",(child["id"],)).fetchone()
+            self.assertIsNone(row["project_id"])
+            self.assertIsNone(json.loads(row["raw_input"])["projectId"])
+            from ledger import digest,canonical
+            self.assertEqual(row["payload_hash"],digest(canonical(json.loads(row["raw_input"]))))
+            self.assertEqual(conn.execute("SELECT count(*) FROM command_dispatch_intents").fetchone()[0],1)
+            self.assertIsNone(conn.execute("SELECT 1 FROM commands WHERE id=?",(root["id"],)).fetchone())
+        conflicting={**decision,"confirmedProjectId":"other"}
+        self.error("conflict",lambda:store.record_decision(self.caps["boss-dispatch"],conflicting))
+        task=decision["tasks"][0]["id"]
+        self.assertTrue(self.boss.reserve_command_attempt(child["id"],task,"confirmed-attempt")["maySpawn"])
+        self.assertFalse(self.boss.reserve_command_attempt(child["id"],task,"confirmed-attempt")["maySpawn"])
+        self.boss.confirm_command_attempt(child["id"],"confirmed-attempt","synthetic-confirmed-child","codex",None)
+        self.assertEqual(store.receipts("owner",None)["receipts"][0]["state"],"started")
+        # Compact proof also fences direct retry after terminal raw retention.
+        with store._private_transaction() as conn:
+            conn.execute("UPDATE commands SET state='handled',terminal_at=? WHERE id=?",(at(31*86400+2),child["id"]))
+        store.purge(at(39*86400))
+        self.assertEqual(ledger.create_run_for_command(child["id"],decision["run"],decision["tasks"],decision["checkpoints"])["id"],decision["run"]["id"])
+        restricted=str(Path(self.tmp.name)/"restricted-project")
+        self.boss.issue_command_capability(restricted,"boss-dispatch",owner_id="owner",binding_id="binding",project_ids=[])
+        with self.assertRaises(PermissionError):
+            Ledger(self.db,restricted).create_run_for_command(child["id"],decision["run"],decision["tasks"],decision["checkpoints"])
+
+    def test_confirmation_rejects_initial_missing_context_unredeemed_and_overrides(self):
+        initial=self.submit();self.receive(initial)
+        with self.assertRaises((ValueError,PermissionError)):
+            self.store.record_decision(self.caps["boss-dispatch"],self.resolved_plan(initial))
+        # Fresh authenticated child has not yet been redeemed.
+        parent=self.submit(self.data("another objective"),4);self.receive(parent,4)
+        self.decision(parent,"needs_clarification",6);self.reply(parent,"clarification",7)
+        child=self.submit(self.data("catalog-project explicitly",parent=parent["id"]),8)
+        with self.assertRaises((ValueError,PermissionError)):
+            self.store.record_decision(self.caps["boss-dispatch"],self.resolved_plan(child))
+        self.receive(child,8)
+        with self.store._private_transaction() as conn:
+            conn.execute("UPDATE commands SET continuation_context=NULL WHERE id=?",(child["id"],))
+        with self.assertRaises((ValueError,PermissionError)):
+            self.store.record_decision(self.caps["boss-dispatch"],self.resolved_plan(child))
+        explicit=self.submit(self.data("explicit task",project="catalog-project"),12);self.receive(explicit,12)
+        with self.assertRaises((ValueError,PermissionError)):
+            self.store.record_decision(self.caps["boss-dispatch"],self.resolved_plan(explicit))
+        for kind in ("query","needs_clarification","revise_run"):
+            with self.assertRaises(ValueError):
+                self.store.record_decision(self.caps["boss-dispatch"],
+                    {"commandId":initial["id"],"kind":kind,"now":at(16),"confirmedProjectId":"catalog-project",
+                     **({"runId":"anything"} if kind=="revise_run" else {})})
+
+    def test_confirmation_allowlist_scope_mismatch_rollback_and_direct_bypass(self):
+        _,child=self.null_project_answer();decision=self.resolved_plan(child)
+        for purpose in ("web-intake","boss-reply","boss-redeem","bridge-claim"):
+            with self.assertRaises(PermissionError):self.store.record_decision(self.caps[purpose],decision)
+        for field,value in (("owner_id","foreign-owner"),("binding_id","foreign-binding")):
+            path=str(Path(self.tmp.name)/value)
+            scope={"owner_id":"owner","binding_id":"binding",field:value}
+            self.boss.issue_command_capability(path,"boss-dispatch",project_ids=["catalog-project"],**scope)
+            with self.assertRaises(PermissionError):self.store.record_decision({"capabilityFile":path},decision)
+        invalid={**decision,"confirmedProjectId":"unknown","run":{**decision["run"],"projectId":"unknown"}}
+        with self.assertRaises((ValueError,PermissionError)):self.store.record_decision(self.caps["boss-dispatch"],invalid)
+        with self.assertRaises((ValueError,PermissionError)):
+            self.store.record_decision(self.caps["boss-dispatch"],{**decision,"run":{**decision["run"],"projectId":"mismatch"}})
+        with self.assertRaises(ValueError):
+            self.store.record_decision(self.caps["boss-dispatch"],{**decision,"checkpoints":[]})
+        with self.store._private_transaction() as conn:
+            row=conn.execute("SELECT * FROM commands WHERE id=?",(child["id"],)).fetchone()
+            self.assertIsNone(row["decision"])
+            self.assertEqual(conn.execute("SELECT count(*) FROM runs").fetchone()[0],0)
+            self.assertEqual(conn.execute("SELECT count(*) FROM command_project_confirmations").fetchone()[0],0)
+            # Simulate direct API bypass of decision processing. Ledger must reject.
+            conn.execute("UPDATE commands SET decision='new_task',decision_hash='unproven' WHERE id=?",(child["id"],))
+        scoped=Ledger(self.db,self.caps["boss-dispatch"]["capabilityFile"])
+        with self.assertRaises((ValueError,PermissionError)):
+            scoped.create_run_for_command(child["id"],decision["run"],decision["tasks"],decision["checkpoints"])
+        with self.store._private_transaction() as conn:
+            conn.execute("UPDATE commands SET decision=NULL,decision_hash=NULL WHERE id=?",(child["id"],))
+        self.store.record_decision(self.caps["boss-dispatch"],decision)
 
 if __name__=="__main__": unittest.main()

@@ -16,12 +16,12 @@ try{
   if(hold)await new Promise(resolve=>{release=resolve});
   return r.fulfill({status:202,json:{receipt:next,replayed:false}}).catch(()=>{});
  });
- await page.goto("http://localhost:3199");const area=page.getByLabel("Boss에게 보낼 내용");await area.waitFor();
+ await page.goto(process.env.BROWSER_BASE_URL??"http://localhost:3199");const area=page.getByLabel("Boss에게 보낼 내용");await area.waitFor();
  const prefix="<img src=x onerror=alert(1)>",first=prefix+"가".repeat(4000-prefix.length),second="두 번째 요청";
  for(const value of [first,second]){await area.fill(value);await page.getByRole("button",{name:"요청 보내기"}).click();await page.waitForFunction(()=>document.querySelector('textarea[aria-label="Boss에게 보낼 내용"]')?.value==="")}
- assert.equal(posts.length,2);assert.equal(await page.evaluate(()=>JSON.stringify(localStorage).includes("두 번째 요청")||JSON.stringify(sessionStorage).includes("두 번째 요청")||location.href.includes(encodeURIComponent("두 번째 요청"))),false);await page.getByRole("button",{name:"기록 새로고침"}).click();await page.getByRole("button",{name:"이전 기록 더 보기"}).click();
+ assert.equal(posts.length,2);assert.equal(await page.evaluate(()=>JSON.stringify(localStorage).includes("두 번째 요청")||JSON.stringify(sessionStorage).includes("두 번째 요청")||location.href.includes(encodeURIComponent("두 번째 요청"))),false);await page.getByRole("button",{name:"기록 새로고침"}).click();if(await page.getByRole("button",{name:"이전 기록 더 보기"}).count())await page.getByRole("button",{name:"이전 기록 더 보기"}).click();
  for(const [id,value] of [[ids[0],first],[ids[1],second]]){const row=page.locator("#command-"+id);await row.getByText("보낸 내용 보기").click();assert.equal(await row.locator("details p").textContent(),value);assert.equal(await row.locator("details img").count(),0)}
- await page.getByRole("button",{name:"기록 새로고침"}).click();await page.waitForTimeout(200);await page.getByRole("button",{name:"이전 기록 더 보기"}).click();
+ await page.getByRole("button",{name:"기록 새로고침"}).click();await page.waitForTimeout(200);if(await page.getByRole("button",{name:"이전 기록 더 보기"}).count())await page.getByRole("button",{name:"이전 기록 더 보기"}).click();
  assert.equal(await page.locator("#command-"+ids[0]+" details p").textContent(),first);assert.equal(await page.locator("#command-"+ids[1]+" details p").textContent(),second);
  hold=true;await area.fill("늦게 도착하는 요청");await page.getByRole("button",{name:"요청 보내기"}).click();await page.waitForFunction(()=>document.querySelector(".boss-send")?.disabled);assert.equal(posts.length,3);
  await page.getByRole("button",{name:"로그아웃"}).click();await page.getByText("내 팀의 업무를 확인하세요").waitFor();release();await page.waitForTimeout(200);

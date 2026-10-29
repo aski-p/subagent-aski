@@ -72,6 +72,10 @@ export function createServer({spoolDir,token,snapshotPath=undefined,progressPath
     const codes={409:["conflict","equivalent_pending"],410:["already_processed"],429:["rate_limited"]};
     if(codes[data?.status]?.includes(data?.error)){
      if(data.status===429){if(!Number.isSafeInteger(data.retryAfter)||data.retryAfter<1||data.retryAfter>3600)throw Error();return send(429,{error:"rate_limited"},{"Retry-After":String(data.retryAfter)});}
+     if(data.status===409&&data.error==="equivalent_pending"){
+      if(!exact(data,["status","error","existingReceiptId"])||typeof data.existingReceiptId!=="string"||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(data.existingReceiptId))throw Error();
+      return send(409,{error:"equivalent_pending",existingReceiptId:data.existingReceiptId});
+     }
      return send(data.status,{error:data.error});
     }
     throw Error();
