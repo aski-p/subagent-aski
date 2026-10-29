@@ -10,16 +10,16 @@ export function selectLoungeRoles(input:{projects:PrivateProject[];publicProject
  const privateIds=new Set(projects.map(p=>p.id)), publicIds=new Set(publicProjectIds), runMap=new Map(runs.map(r=>[r.id,r]));
  const eligible=(r:RunProgress)=>{const f=filter.project; if(f.kind==='private')return privateIds.has(f.id)&&r.projectId===f.id; if(f.kind==='public')return publicIds.has(f.id)&&!privateIds.has(f.id)&&r.projectId===f.id; return privateIds.has(r.projectId)||publicIds.has(r.projectId)};
  const stale=fetchFailed||!observedAt||!Number.isFinite(Date.parse(observedAt))||nowMs-Date.parse(observedAt)>=90000||Date.parse(observedAt)>nowMs+5000;
- return roleIds.map(role=>{const candidates=tasks.filter(t=>t.role===role&&(!filter.provider||t.provider===filter.provider)&&!!runMap.get(t.runId)&&eligible(runMap.get(t.runId)!)).sort((a,b)=>priority[a.state]-priority[b.state]||a.id.localeCompare(b.id));
+ return roleIds.map(role=>{const scoped=tasks.filter(t=>t.role===role&&(!filter.provider||t.provider===filter.provider)&&!!runMap.get(t.runId)&&eligible(runMap.get(t.runId)!));const candidates=scoped.filter(t=>t.provider===provider[role]).sort((a,b)=>priority[a.state]-priority[b.state]||a.id.localeCompare(b.id));
  const task=candidates.find(t=>t.id===selectedTaskIds[role])??candidates[0]??null;
- if(!task)return {role,mode:'idle',task:null,attemptId:null,verifiedPct:null,candidateTaskIds:[],statusLabel:labels.idle,completionKey:null};
+ if(!task){const collision=scoped.some(t=>t.provider!==provider[role]);return {role,mode:collision?'unknown':'idle',task:null,attemptId:null,verifiedPct:null,candidateTaskIds:[],statusLabel:collision?'배정 확인 필요':labels.idle,completionKey:null}};
  const attempt=[...task.attempts].sort((a,b)=>Date.parse(b.startedAt)-Date.parse(a.startedAt)||b.id.localeCompare(a.id))[0]??null;
- const mismatch=task.provider!==provider[role]; let mode:LoungeMode;
- if(mismatch)mode='unknown';else if(stale)mode='stale';else if(task.state==='working'||task.state==='qa'){
- const valid=attempt&&!attempt.endedAt&&activityProofs.some(p=>{const confirmed=Date.parse(p.confirmedAt),expires=Date.parse(p.leaseExpiresAt);return p.taskId===task.id&&p.runId===task.runId&&p.attemptId===attempt.id&&p.planVersion===task.planVersion&&p.provider===task.provider&&p.source===(task.provider==='codex'?'codex-native':'claude-supervisor')&&Number.isFinite(confirmed)&&Number.isFinite(expires)&&confirmed<=nowMs+5000&&nowMs-confirmed<=90000&&expires>nowMs&&expires<=confirmed+90000&&(p.state==='running'||p.state==='reviewing')});
- const proof=valid?activityProofs.find(p=>p.taskId===task.id&&p.runId===task.runId&&p.attemptId===attempt?.id&&p.planVersion===task.planVersion&&p.provider===task.provider&&p.source===(task.provider==='codex'?'codex-native':'claude-supervisor')&&(p.state==='running'||p.state==='reviewing')&&Date.parse(p.confirmedAt)<=nowMs+5000&&nowMs-Date.parse(p.confirmedAt)<=90000&&Date.parse(p.leaseExpiresAt)>nowMs&&Date.parse(p.leaseExpiresAt)<=Date.parse(p.confirmedAt)+90000):null;
+ let mode:LoungeMode;
+ if(stale)mode='stale';else if(task.state==='working'||task.state==='qa'){
+ const eligibleAttempt=attempt&&!attempt.endedAt&&attempt.state===task.state;
+ const proof=eligibleAttempt?activityProofs.find(p=>{const confirmed=Date.parse(p.confirmedAt),expires=Date.parse(p.leaseExpiresAt);return p.taskId===task.id&&p.runId===task.runId&&p.attemptId===attempt.id&&p.planVersion===task.planVersion&&p.provider===task.provider&&p.source===(task.provider==='codex'?'codex-native':'claude-supervisor')&&p.state===(attempt.state==='working'?'running':'reviewing')&&Number.isFinite(confirmed)&&Number.isFinite(expires)&&confirmed<=nowMs+5000&&nowMs-confirmed<=90000&&expires>nowMs&&expires<=confirmed+90000}):undefined;
  mode=proof?(proof.state==='reviewing'?'reviewing':'working'):'unknown';
  }else mode=({queued:'waiting',blocked:'blocked',failed:'failed',canceled:'canceled',done:'completed'} as const)[task.state];
- return {role,mode,task,attemptId:attempt?.id??null,verifiedPct:task.checkpoints.some(c=>c.weight>0)?task.verifiedPct:null,candidateTaskIds:candidates.map(t=>t.id),statusLabel:mismatch?'배정 확인 필요':labels[mode],completionKey:mode==='completed'&&attempt?`${task.id}:${attempt.id}`:null};
+ return {role,mode,task,attemptId:attempt?.id??null,verifiedPct:task.checkpoints.some(c=>c.weight>0)?task.verifiedPct:null,candidateTaskIds:candidates.map(t=>t.id),statusLabel:labels[mode],completionKey:mode==='completed'&&attempt?`${task.id}:${attempt.id}`:null};
  });
 }
