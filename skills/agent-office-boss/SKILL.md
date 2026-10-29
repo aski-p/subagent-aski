@@ -32,6 +32,8 @@ On EVERY turn, resume and normal heartbeat call `command-resume` with `{}`. It r
 
 Controller operations (each name is the final argument to the same invocation above; the braces below describe exact JSON keys):
 
+Protocol types: task `provider` and native confirm/reconcile `observedProvider` accept only the exact engine IDs `"codex"` or `"claude"`. Actual Codex native tools use `"codex"`; actual Claude uses `"claude"` only through its real supervisor. Company/roster values such as `"openai"` are invalid here. Set `observedModel` to `null` unless the actual tool reported the model; never infer it from the requested provider or model.
+
 | Operation | Stdin and behavior |
 | --- | --- |
 | `command-decision` | `{commandId,kind:"query"}` or `{commandId,kind:"needs_clarification"}`. Both create zero runs. |
