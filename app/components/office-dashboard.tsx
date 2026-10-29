@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchOfficeSnapshot, fetchOfficeProgress, OfficeFetchError } from "@/lib/office-browser";
-import { Avatar, roles } from "./role-avatar";
+import { Avatar, roles, agentLabel } from "./role-avatar";
 import { AgentDetail } from "./agent-detail";
 import { SourceCoverageView } from "./source-coverage";
 import { usePublicEvidence } from "./public-evidence";
@@ -351,7 +351,7 @@ export default function OfficeDashboard() {
                           <span className="unknown">?</span>
                         )}
                         <span>
-                          <strong>{a.name ?? "이름 확인 불가"}</strong>
+                          <strong>{agentLabel(a)}</strong>
                           <small>
                             {a.roleId ? roles[a.roleId][0] : "역할 확인 불가"} ·{" "}
                             {a.projectId ?? "프로젝트 확인 불가"}
@@ -413,11 +413,10 @@ export default function OfficeDashboard() {
                           담당:{" "}
                           {t.assigneeIds.length
                             ? t.assigneeIds
-                                .map(
-                                  (id) =>
-                                    snapshot?.agents.find((a) => a.id === id)
-                                      ?.name ?? id,
-                                )
+                                .map((id) => {
+                                  const assignee = snapshot?.agents.find((a) => a.id === id);
+                                  return assignee?.name != null ? agentLabel(assignee) : id;
+                                })
                                 .join(", ")
                             : "확인 불가"}
                         </small>

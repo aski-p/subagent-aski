@@ -113,3 +113,6 @@ Tasks 1→2→3→4→5→6 are serial implementation/review gates. Task 2 may p
 ## Plan self-review
 
 Spec coverage: existing-chat ownership/queue=Tasks 1/5; real roles and caps=Tasks 3/4; verified checkpoint semantics=Task 3; private engine catalog=Task 2; owner UI/access/logout=Tasks 2/6; installation/hidden subprocess/restart=Task 5; final evidence chain=Task 6. All five Review Focus cases have explicit owning tests. Types originate in Task 2 and ledger exports must validate against that schema. Review gates and exact interfaces permit one implementer at a time; Claude implementers remain real Claude, not renamed GPT agents. No product implementation, installation, live queue probe, or background job has been executed by writing this plan.
+
+
+사용자 추가 표시 지시: 모든 화면·Boss 보고·자동 표에 Atlas(설계), Forge(개발), Frame(UI/UX), Palette(디자인), Scout(조사), Sentinel(검수), Boss(총괄)로 표시한다. 내부 roleId와 실제 provider/model/session identity는 변경하지 않는다.

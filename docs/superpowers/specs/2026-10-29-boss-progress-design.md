@@ -85,3 +85,6 @@ ProgressV1은 이 장부의 허용 필드만 투영한다. 세션 UUID의 원본
 ## 승인 후 확인된 프로젝트 목록 보완
 GitHub 연결 조회에서 엔진 저장소 세 개가 private임을 확인했다. 기존 /api/projects는 의도적으로 공개 저장소만 제공하므로 그 경로를 private 조회로 바꾸지 않는다. owner 전용 런타임 프로젝트 catalog를 별도로 추가하고 실제 이름/비공개 GitHub 링크는 저장소 밖의 root 관리 설정에만 넣는다. 공개 소스/config/fixture에는 실제 private 프로젝트 이름/링크를 남기지 않는다. 로그인 owner의 선택기에는 아직 에이전트/작업 기록이 없는 catalog 프로젝트도 보이고 작업 없음으로 표시한다. 공개 GitHub evidence와 private catalog는 명시적으로 구분한다. 새 OAuth repo scope/키는 요구하지 않는다.
 실제 실행 동시 한도는 전체 작업자 4개, 그중 Claude 2개이며 Boss는 한도 계산에서 제외한다. 구현은 한 번에 한 코드 구현자씩 직렬 진행하고 독립 검토 후 다음 작업으로 간다.
+
+
+사용자 추가 표시 지시: 모든 화면·Boss 보고·자동 표에 Atlas(설계), Forge(개발), Frame(UI/UX), Palette(디자인), Scout(조사), Sentinel(검수), Boss(총괄)로 표시한다. 내부 roleId와 실제 provider/model/session identity는 변경하지 않는다.

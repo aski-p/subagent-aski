@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
+import { agentLabel } from "./role-avatar";
 import type { AgentView, SnapshotV1 } from "@/lib/status-contract";
 const time = (s: string | null) =>
   s
@@ -74,7 +75,7 @@ export function AgentDetail({
         <header>
           <div>
             <p className="eyebrow">업무 상세</p>
-            <h2 id="detail-title">{agent.name ?? "이름 확인 불가"}</h2>
+            <h2 id="detail-title">{agentLabel(agent)}</h2>
           </div>
           <button ref={close} onClick={onClose}>
             닫기
@@ -92,7 +93,7 @@ export function AgentDetail({
           <div>
             <dt>확인된 상위 에이전트</dt>
             <dd>
-              {agent.parentId ? (parent?.name ?? agent.parentId) : "확인 불가"}
+              {agent.parentId ? (parent?.name != null ? agentLabel(parent) : agent.parentId) : "확인 불가"}
             </dd>
           </div>
           <div>
