@@ -309,4 +309,38 @@ class WindowsAclEnvironmentTest(unittest.TestCase):
             with patch.dict(os.environ,{'SystemRoot':'/synthetic/windows','PSModulePath':'synthetic-pwsh7-modules'}),patch.object(ctl.sys,'platform','win32'),patch.object(subprocess,'CREATE_NO_WINDOW',0x08000000,create=True),patch.object(subprocess,'run',side_effect=subprocess.CalledProcessError(1,'fixed-acl-child')),patch.object(Path,'open',side_effect=AssertionError('config read before ACL approval')):
                 with self.assertRaises(subprocess.CalledProcessError):ctl.protected_json(str(config))
 
+
+
+class NativeIdentityCompatibilityTest(NativeControllerTest):
+    def test_canonical_tool_identity_confirm_context_reconcile_and_replay(self):
+        from types import SimpleNamespace
+        from office_cli import command_operation
+        child='/root/boss_live_qa'
+        r=self.prepare()
+        self.assertTrue(self.boss.reserve_command_attempt(r['id'],'task','attempt')['maySpawn'])
+        self.assertEqual(self.boss.confirm_command_attempt(r['id'],'attempt',child,'codex',None),{'registered':True})
+        self.assertEqual(self.boss.confirm_command_attempt(r['id'],'attempt',child,'codex',None),{'registered':True})
+        self.assertEqual(self.boss.reconcile_command_attempt(r['id'],'attempt',{'status':'observed','childId':child,'observedProvider':'codex','observedModel':None}),{'registered':True})
+        self.assertFalse(self.boss.reserve_command_attempt(r['id'],'task','attempt')['maySpawn'])
+        resumed=self.store.resume(self.caps['boss-redeem'])[0]
+        args=SimpleNamespace(db=self.db,capability_file=self.caps['boss-redeem']['capabilityFile'],command='command-context')
+        context=command_operation(args,{'commandId':r['id'],'payloadHash':resumed['payloadHash']})
+        self.assertEqual(context['nativeIntents'][0]['childId'],child)
+        self.assertNotIn(child,json.dumps(self.boss.project_progress(at(5))))
+        self.assertNotIn(child,json.dumps(self.store.receipts('owner',None)))
+        with self.assertRaisesRegex(ValueError,'child_conflict'):self.boss.confirm_command_attempt(r['id'],'attempt','/root/another_child','codex',None)
+    def test_opaque_id_compatibility_and_path_negatives(self):
+        from ledger import native_child_id,key
+        for child in ('synthetic-native-child','00000000-0000-4000-8000-000000000001','/root/boss_live_qa','/root/parent_task/nested_2'):
+            self.assertEqual(native_child_id(child),child)
+        for child in ('/tmp/boss_live_qa','/root','/root/../escape','/root/a/./b','/root//child','/root/child/','/root/UpperCase','/root/child-name','https://example.test/child','C:/tmp/child','/root/child\n','/root/'+('a'*257),None):
+            with self.subTest(child=child),self.assertRaises(ValueError):native_child_id(child)
+        for identifier in ('/root/boss_live_qa','/tmp/arbitrary','https://example.test/id','bad\n'):
+            with self.assertRaises(ValueError):key(identifier)
+    def test_direct_attempt_native_identity_is_validated_without_weakening_general_ids(self):
+        r=self.prepare()
+        with self.assertRaises(ValueError):self.boss.start_attempt('task',{'id':'attempt','observedProvider':'codex','nativeChildId':'/tmp/arbitrary'})
+        self.assertEqual(self.boss.start_attempt('task',{'id':'attempt','observedProvider':'codex','nativeChildId':'/root/boss_live_qa'}),{'id':'attempt'})
+        with self.assertRaises(ValueError):self.boss.start_attempt('task',{'id':'/root/not_an_attempt','observedProvider':'codex'})
+
 if __name__=='__main__':unittest.main()

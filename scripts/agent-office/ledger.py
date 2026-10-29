@@ -42,6 +42,18 @@ def key(value):
         raise ValueError("invalid_id")
     return value
 
+def native_child_id(value):
+    """Private observed-tool identity; never a filesystem path or general ledger ID.
+
+    Collaboration returns an exact canonical task name, not an exposed UUID.
+    Preserve that bounded /root/lowercase_task identity without transforming it.
+    """
+    if not isinstance(value,str):raise ValueError("invalid_native_child_id")
+    if "/" not in value:return key(value)  # Existing opaque UUID/key compatibility.
+    if len(value)>256 or not re.fullmatch(r"/root(?:/[a-z0-9_]+)+",value):
+        raise ValueError("invalid_native_child_id")
+    return value
+
 def version(value):
     if type(value) is not int or not 1 <= value <= 1000000:
         raise ValueError("invalid_version")
@@ -386,6 +398,7 @@ class Ledger:
             if task is None: raise ValueError("unknown_task")
             self._run(conn,task["run_id"])
             aid=key(attempt["id"])
+            if "nativeChildId" in attempt:native_child_id(attempt["nativeChildId"])
             provider=attempt.get("observedProvider")
             if provider != task["provider"]: raise ValueError("observed_provider_required")
             old=conn.execute("SELECT * FROM attempts WHERE id=?",(aid,)).fetchone()
@@ -464,7 +477,7 @@ class Ledger:
 
     def confirm_command_attempt(self, command_id, attempt_id, child_id, observed_provider, observed_model):
         """Trusted original Boss supplies values from its ACTUAL native tool result."""
-        key(child_id)
+        native_child_id(child_id)
         with self.transaction() as conn:
             self._native_command(conn,command_id)
             row=conn.execute("SELECT * FROM native_dispatches WHERE attempt_id=? AND command_id=?",(key(attempt_id),command_id)).fetchone()
