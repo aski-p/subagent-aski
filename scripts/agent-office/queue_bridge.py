@@ -35,7 +35,8 @@ def _require_key(report, field):
     return value
 
 def _require_executable(path):
-    if not isinstance(path, str) or not (PurePosixPath(path).is_absolute() or PureWindowsPath(path).is_absolute()):
+    path_flavor = PureWindowsPath if sys.platform == 'win32' else PurePosixPath
+    if not isinstance(path, str) or not path_flavor(path).is_absolute():
         raise ValueError('codex executable must be an absolute configured path')
     return path
 

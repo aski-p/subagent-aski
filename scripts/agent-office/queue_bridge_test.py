@@ -12,7 +12,9 @@ import queue_bridge
 
 BOSS = '00000000-0000-4000-8000-000000000001'
 OTHER = '00000000-0000-4000-8000-000000000002'
-EXE = '/opt/test/codex'
+POSIX_EXE = '/opt/test/codex'
+WIN_EXE = 'C:/Program Files/Codex/bin/codex.exe'
+EXE = WIN_EXE if sys.platform == 'win32' else POSIX_EXE
 
 def report(**overrides):
     base = {'bossId': BOSS, 'runId': 'run-1', 'reportId': 'rep-1', 'revision': 2,
@@ -44,7 +46,27 @@ class UuidOnlyTargetTest(unittest.TestCase):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
                 queue_bridge.queue_report(bad, BOSS, report(), run_process=run)
             run.assert_not_called()
-        queue_bridge.queue_report('C:/Program Files/Codex/bin/codex.exe', BOSS, report(), run_process=ok_process())
+
+    def test_executable_absolute_on_actual_host_flavor(self):
+        matrix = {
+            'linux': ([POSIX_EXE, '/usr/local/bin/codex'],
+                      [WIN_EXE, 'C:\\Codex\\codex.exe', 'C:codex.exe', '\\Codex\\codex.exe', 'codex', './codex']),
+            'win32': ([WIN_EXE, 'C:\\Codex\\codex.exe', '\\\\server\\share\\codex.exe'],
+                      [POSIX_EXE, '/Codex/codex.exe', '\\Codex\\codex.exe', 'C:codex.exe', 'C:Codex\\codex.exe', 'codex.exe', '.\\codex.exe']),
+        }
+        for platform, (valid, invalid) in matrix.items():
+            with patch.object(sys, 'platform', platform), patch.object(subprocess, 'CREATE_NO_WINDOW', 0x08000000, create=True):
+                for path in valid:
+                    run = ok_process()
+                    with self.subTest(platform=platform, valid=path):
+                        self.assertEqual(queue_bridge.queue_report(path, BOSS, report(), run_process=run)['status'], 'queued')
+                        self.assertEqual(run.call_args.args[0][0], path)
+                for path in invalid:
+                    run = ok_process()
+                    with self.subTest(platform=platform, invalid=path):
+                        with self.assertRaises(ValueError):
+                            queue_bridge.queue_report(path, BOSS, report(), run_process=run)
+                        run.assert_not_called()
 
 class QueueAcceptanceTest(unittest.TestCase):
     def test_queue_acceptance_not_ack(self):
@@ -79,12 +101,12 @@ class ArgumentArrayTest(unittest.TestCase):
     def test_argument_array_and_hidden_windows_child(self):
         run = ok_process()
         with patch.object(sys, 'platform', 'win32'), patch.object(subprocess, 'CREATE_NO_WINDOW', 0x08000000, create=True):
-            queue_bridge.queue_report(EXE, BOSS, report(summary='x; rm -rf / && "quoted" $(id)'), run_process=run)
+            queue_bridge.queue_report(WIN_EXE, BOSS, report(summary='x; rm -rf / && "quoted" $(id)'), run_process=run)
         run.assert_called_once()
         argv = run.call_args.args[0]
         kwargs = run.call_args.kwargs
         self.assertIsInstance(argv, list)
-        self.assertEqual(argv[:5], [EXE, 'queue', '--thread', BOSS, '--message'])
+        self.assertEqual(argv[:5], [WIN_EXE, 'queue', '--thread', BOSS, '--message'])
         self.assertEqual(len(argv), 6)
         self.assertIn('rep-1', argv[5])
         self.assertIn('x; rm -rf / && "quoted" $(id)', argv[5], 'payload is one argv element, never shell-joined')
@@ -98,7 +120,7 @@ class ArgumentArrayTest(unittest.TestCase):
     def test_posix_does_not_receive_windows_creation_flags(self):
         run = ok_process()
         with patch.object(sys, 'platform', 'linux'):
-            queue_bridge.queue_report(EXE, BOSS, report(), run_process=run)
+            queue_bridge.queue_report(POSIX_EXE, BOSS, report(), run_process=run)
         self.assertEqual(run.call_args.kwargs.get('creationflags', 0), 0)
         self.assertIs(run.call_args.kwargs.get('shell', False), False)
 
