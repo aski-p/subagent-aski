@@ -239,6 +239,41 @@ try {
   assert.equal(mutationPosts,0,'room interactions never POST work or commands');
   await room.close();
 
+  // Contract-sized unbroken Progress values must remain inside the mobile detail.
+  const longId = 't'.repeat(128);
+  const longModel = 'm'.repeat(300);
+  const longLabel = 'c'.repeat(300);
+  const longTask = {...task(longId,'frame','codex',[{...criterion,label:longLabel}]), observedModel:longModel, attempts:[{id:'long-attempt',state:'working',observedModel:longModel,startedAt:now,endedAt:null}]};
+  const longProgress = {...privateProgress,runs:[run],tasks:[longTask]};
+  const mobileDetail = await pageFor(375,true,()=>({status:200,body:sample}),false,
+    ()=>({status:200,body:longProgress}));
+  await mobileDetail.locator('.filters select').first().selectOption('private:alpha');
+  const openDetail = mobileDetail.locator('.lounge-inspector-row').filter({hasText:'Frame(UI/UX)'})
+    .getByRole('button',{name:'작업 보기'});
+  await openDetail.focus();
+  await mobileDetail.keyboard.press('Enter');
+  const detail = mobileDetail.locator('.lounge-detail');
+  await detail.waitFor();
+  assert.equal(await detail.evaluate(e=>document.activeElement===e),true,'keyboard open focuses detail');
+  assert.match(await detail.locator('h3').textContent(),new RegExp(longId));
+  assert.match(await detail.locator('p').first().textContent(),new RegExp(longModel));
+  assert.match(await detail.locator('li').first().textContent(),new RegExp(longLabel));
+  const contained = await detail.evaluate(e => {
+    const outer=e.getBoundingClientRect();
+    return [...e.querySelectorAll('h3,p,li')].every(child => {
+      const rect=child.getBoundingClientRect();
+      return rect.left>=outer.left && rect.right<=outer.right && child.scrollWidth<=child.clientWidth;
+    });
+  });
+  assert.equal(contained,true,'long detail text must fit its container');
+  await noOverflow(mobileDetail);
+  const closeDetail = detail.getByRole('button',{name:'닫기'});
+  await closeDetail.focus();
+  await mobileDetail.keyboard.press('Enter');
+  assert.equal(await detail.count(),0);
+  assert.equal(await openDetail.evaluate(e=>document.activeElement===e),true,'close returns focus to the same role button');
+  await mobileDetail.close();
+
   // Private catalog identities never bind legacy records by string equality.
   const collision = await pageFor(1440, true, () => ({status:200,body:sample}), false, () => ({status:200,body:privateProgress}));
   await collision.getByText("Synthetic Alpha",{exact:true}).waitFor();

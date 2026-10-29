@@ -267,6 +267,8 @@
 .lounge-preview-figures .lounge-avatar {
   width:130px}
 .lounge-detail {
+  min-width:0;
+  overflow-wrap:anywhere;
   padding:20px;
   border:1px solid #a9c9bc;
   background:#f7faf6;
