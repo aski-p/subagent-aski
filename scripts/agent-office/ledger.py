@@ -142,6 +142,7 @@ class Ledger:
         self._active = ContextVar("ledger_transaction", default=None)
         with self.transaction() as conn:
             self._capability(conn)
+            self._migrate_command_scopes(conn)
 
     @staticmethod
     def _connect(path):
@@ -164,7 +165,7 @@ class Ledger:
         try:
             conn.executescript(SCHEMA)
             conn.execute("BEGIN IMMEDIATE")
-            conn.execute("INSERT INTO capabilities VALUES (?,?,?,?,?,?,0)",
+            conn.execute("INSERT INTO capabilities(credential_hash,actor,boss_id,run_id,task_id,attempt_id,revoked) VALUES (?,?,?,?,?,?,0)",
                          (digest(secret), "boss", boss_id, None, None, None))
             write_new_private(capability_file, secret)
             conn.commit()
@@ -242,11 +243,75 @@ class Ledger:
             task = conn.execute("SELECT * FROM tasks WHERE id=? AND run_id=?", (task_id,run_id)).fetchone()
             if task is None: raise ValueError("unknown_task")
             secret = secrets.token_urlsafe(48)
-            conn.execute("INSERT INTO capabilities VALUES(?,?,?,?,?,?,0)",
+            conn.execute("INSERT INTO capabilities(credential_hash,actor,boss_id,run_id,task_id,attempt_id,revoked) VALUES(?,?,?,?,?,?,0)",
                          (digest(secret), actor, cap["boss_id"], run_id, task_id, attempt_id))
             write_new_private(capability_file, secret)
             self._audit(conn, "issue", {"actor":actor,"run":run_id,"task":task_id,"attempt":attempt_id})
             return {"issued":True}
+
+    @staticmethod
+    def _migrate_command_scopes(conn):
+        # Compatible with existing Boss/worker/verifier credentials and inserts.
+        columns={r["name"] for r in conn.execute("PRAGMA table_info(capabilities)")}
+        for name in ("purpose","owner_id","binding_id","project_ids"):
+            if name not in columns:
+                conn.execute("ALTER TABLE capabilities ADD COLUMN " + name + " TEXT")
+
+    @staticmethod
+    def capability_for_file(conn, capability_file):
+        credential_hash=digest(read_protected(capability_file).strip())
+        cap=conn.execute("SELECT * FROM capabilities WHERE credential_hash=? AND revoked=0",
+                         (credential_hash,)).fetchone()
+        if cap is None: raise PermissionError("invalid_capability")
+        return cap
+
+    def issue_command_capability(self, capability_file, purpose, *, owner_id, binding_id, project_ids):
+        """Trusted Boss provisioning from the registered runtime/catalog context.
+
+        Never expose this issuer to a web event or let a browser supply its scopes.
+        """
+        from command_authority import PURPOSES
+        if purpose not in PURPOSES: raise ValueError("invalid_purpose")
+        key(owner_id);key(binding_id)
+        if not isinstance(project_ids,list) or len(project_ids)>500:
+            raise ValueError("invalid_catalog")
+        if len(set(project_ids))!=len(project_ids): raise ValueError("invalid_catalog")
+        for value in project_ids: key(value)
+        with self.transaction() as conn:
+            cap=self._authorize(conn,{"boss"})
+            secret=secrets.token_urlsafe(48)
+            conn.execute("""INSERT INTO capabilities
+              (credential_hash,actor,boss_id,revoked,purpose,owner_id,binding_id,project_ids)
+              VALUES(?,?,?,0,?,?,?,?)""",
+              (digest(secret),"command",cap["boss_id"],purpose,owner_id,binding_id,canonical(project_ids)))
+            write_new_private(capability_file,secret)
+            self._audit(conn,"issue_command",{"purpose":purpose,"owner":owner_id,"binding":binding_id})
+            return {"issued":True}
+
+    def create_run_for_command(self, command_id:str, run:dict, tasks:list, checkpoints:list)->dict:
+        """One transaction: scoped command, native run, binding and spawn intent."""
+        from commands import command_row, scope_row
+        with self.transaction() as conn:
+            cap=self._capability(conn)
+            if cap["actor"]!="command" or cap["purpose"]!="boss-dispatch":
+                raise PermissionError("wrong_purpose")
+            row=command_row(conn,command_id)
+            scope_row(row,cap)
+            payload_hash=digest(canonical([run,tasks,checkpoints]))
+            if row["run_id"]:
+                intent=conn.execute("SELECT * FROM command_dispatch_intents WHERE command_id=?",(command_id,)).fetchone()
+                if not intent or intent["payload_hash"]!=payload_hash:
+                    raise ValueError("command_run_conflict")
+                return {"id":row["run_id"]}
+            if row["received_at"] is None or row["decision"]!="new_task" or row["state"] in {"handled","closed","failed","expired"}:
+                raise ValueError("command_not_dispatchable")
+            if run.get("bossId")!=cap["boss_id"] or run.get("projectId")!=row["project_id"] or run.get("projectId") not in json.loads(cap["project_ids"]):
+                raise PermissionError("wrong_run_scope")
+            result=self._create_run(run,tasks,checkpoints,command_id=command_id)
+            conn.execute("UPDATE commands SET run_id=?,stage='dispatch_intent',state='queued' WHERE id=?",(result["id"],command_id))
+            conn.execute("INSERT INTO command_dispatch_intents(command_id,run_id,payload_hash,state) VALUES(?,?,?,'pending')",
+                         (command_id,result["id"],payload_hash))
+            return result
 
     def revoke_capability(self, capability_file):
         with self.transaction() as conn:
@@ -259,16 +324,22 @@ class Ledger:
             return {"revoked":True}
 
     def create_run(self, run:dict, tasks:list, checkpoints:list)->dict:
+        return self._create_run(run,tasks,checkpoints)
+
+    def _create_run(self, run, tasks, checkpoints, command_id=None):
         with self.transaction() as conn:
-            self._authorize(conn, {"boss"})
+            if command_id is None:
+                self._authorize(conn, {"boss"})
             if not isinstance(run,dict) or not isinstance(tasks,list) or not isinstance(checkpoints,list):
                 raise ValueError("invalid_plan")
-            self._authorize(conn, {"boss"}, boss_id=run.get("bossId"), run_id=run.get("id"))
+            if command_id is None:
+                self._authorize(conn, {"boss"}, boss_id=run.get("bossId"), run_id=run.get("id"))
             rid,bid,pid = key(run["id"]),key(run["bossId"]),key(run["projectId"])
             plan = version(run["planVersion"])
             payload_hash = digest(canonical([run,tasks,checkpoints]))
             previous = conn.execute("SELECT create_hash FROM runs WHERE id=?",(rid,)).fetchone()
             if previous:
+                if command_id is not None: raise ValueError("run_conflict")
                 if previous[0] != payload_hash: raise ValueError("run_conflict")
                 return {"id":rid}
             if not 1 <= len(tasks) <= 2000 or not 1 <= len(checkpoints) <= 10000:
@@ -419,6 +490,16 @@ class Ledger:
             if row is None or row["revision"]!=version(revision): raise ValueError("report_revision_mismatch")
             self._run(conn,row["run_id"])
             conn.execute("UPDATE reports SET status='acknowledged',updated_at=? WHERE id=?",(timestamp(),report_id))
+            # W1 completion is tied to a verified result ACK after core approval.
+            # An earlier report ACK cannot silently finish a later work attempt.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='commands'").fetchone():
+                checkpoints=conn.execute("""SELECT c.state FROM checkpoints c JOIN tasks t ON t.id=c.task_id
+                                          WHERE t.run_id=?""",(row["run_id"],)).fetchall()
+                if checkpoints and all(c["state"]=="accepted" for c in checkpoints):
+                    at=timestamp()
+                    conn.execute("""UPDATE commands SET state='handled',stage='handled',terminal_at=?,
+                       last_handled_at=?,updated_at=? WHERE run_id=? AND state='started' AND stage='dispatched'""",
+                       (at,at,at,row["run_id"]))
             self._audit(conn,"ack_report",{"id":report_id,"revision":revision})
             return {"id":report_id,"revision":revision,"status":"acknowledged"}
 

@@ -3,7 +3,44 @@ import argparse
 import json
 import sqlite3
 import sys
-from ledger import Ledger, MAX_BYTES, atomic_export, canonical, read_protected
+from ledger import Ledger, MAX_BYTES, atomic_export, canonical, read_protected, timestamp
+from commands import CommandStore, CommandError, exact
+from command_authority import require_command_capability
+
+COMMANDS=["command-submit","command-list","command-claim","command-transport","command-redeem",
+          "command-decision","command-reply","command-resume","command-purge"]
+
+def command_operation(args,data):
+    store=CommandStore(args.db)
+    capability={"capabilityFile":args.capability_file}
+    op=args.command
+    if op=="command-submit":
+        exact(data,("input",),("now",))
+        cap=require_command_capability(capability,"web-intake",{"dbPath":args.db})
+        return store.submit_result(capability,{"id":cap["binding_id"]},data["input"],data.get("now",timestamp()))
+    if op=="command-list":
+        exact(data,(),("cursor","limit"))
+        with store._authorized(capability,"web-intake") as (_,_,cap):
+            return store.receipts(cap["owner_id"],data.get("cursor"),data.get("limit",50))
+    if op=="command-claim":
+        exact(data,(),("now",))
+        return store.claim(capability,data.get("now",timestamp()))
+    if op=="command-transport":
+        exact(data,("commandId","leaseToken","outcome"),("now",))
+        return store.record_transport({**data,"now":data.get("now",timestamp()),"capability":capability})
+    if op=="command-redeem":
+        exact(data,("commandId","payloadHash"),("now",))
+        return store.redeem(capability,data["commandId"],data["payloadHash"],data.get("now",timestamp()))
+    if op=="command-decision":
+        return store.record_decision(capability,{**data,"now":data.get("now",timestamp())})
+    if op=="command-reply":
+        return store.write_reply(capability,{**data,"now":data.get("now",timestamp())})
+    if op=="command-resume":
+        exact(data,())
+        return store.resume(capability)
+    exact(data,(),("now",))
+    with store._authorized(capability,"boss-dispatch"):
+        return store.purge(data.get("now",timestamp()))
 
 def main():
     parser=argparse.ArgumentParser()
@@ -11,13 +48,17 @@ def main():
     parser.add_argument("--capability-file",required=True)
     parser.add_argument("--input-file")
     parser.add_argument("command",choices=["run-create","attempt-start","checkpoint-report",
-                                          "checkpoint-verify","report-ack","run-approve","export"])
+                                          "checkpoint-verify","report-ack","run-approve","export"]+COMMANDS)
     args=parser.parse_args()
     try:
         raw=read_protected(args.input_file) if args.input_file else sys.stdin.read(MAX_BYTES+1)
         if len(raw.encode())>MAX_BYTES: raise ValueError("input_too_large")
         data=json.loads(raw)
         if not isinstance(data,dict): raise ValueError("invalid_input")
+        if args.command in COMMANDS:
+            result=command_operation(args,data)
+            print(canonical(result))
+            return 0
         ledger=Ledger(args.db,args.capability_file)
         # Holding the outer transaction serializes the entire mutating dispatch.
         with ledger.transaction():
@@ -36,6 +77,12 @@ def main():
         # Never echo internal IDs, paths, evidence, model requests or exception text.
         print(canonical({"ok":True}))
         return 0
+    except CommandError as exc:
+        result={"error":exc.code,"status":exc.status}
+        if exc.receipt_id: result["existingReceiptId"]=exc.receipt_id
+        if exc.retry_after: result["retryAfter"]=exc.retry_after
+        print(canonical(result))
+        return 1
     except PermissionError: error="permission_denied"
     except (ValueError,KeyError,TypeError,OverflowError,AttributeError,IndexError): error="invalid_input"
     except (OSError,sqlite3.Error): error="storage_error"
