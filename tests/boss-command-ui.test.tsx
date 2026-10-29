@@ -11,3 +11,19 @@ test("context uses cursor header and submit returns receipt from envelope",async
  }finally{globalThis.fetch=old}
 });
 test("unknown outcome remains distinguishable",async()=>{const old=globalThis.fetch;try{globalThis.fetch=async()=>Response.json({error:"source_unavailable",outcomeUnknown:true},{status:503});await assert.rejects(sendBossCommand({schemaVersion:1,clientRequestId:"11111111-1111-4111-8111-111111111111",projectId:null,text:"질문"},"csrf"),(e:unknown)=>e instanceof CommandFetchError&&e.outcomeUnknown)}finally{globalThis.fetch=old}});
+
+test("POST gateway failures are uncertain while disabled and GET failures remain definite",async()=>{
+ const old=globalThis.fetch;
+ const input={schemaVersion:1 as const,clientRequestId:"11111111-1111-4111-8111-111111111111",projectId:null,text:"질문"};
+ try{
+  for(const status of [502,503,504]){
+   globalThis.fetch=async()=>new Response("<html>gateway</html>",{status});
+   await assert.rejects(sendBossCommand(input,"csrf"),(e:unknown)=>e instanceof CommandFetchError&&e.status===status&&e.outcomeUnknown);
+   await assert.rejects(fetchCommandContext(),(e:unknown)=>e instanceof CommandFetchError&&!e.outcomeUnknown);
+  }
+  globalThis.fetch=async()=>Response.json({error:"commands_disabled"},{status:503});
+  await assert.rejects(sendBossCommand(input,"csrf"),(e:unknown)=>e instanceof CommandFetchError&&!e.outcomeUnknown&&e.code==="commands_disabled");
+  globalThis.fetch=async()=>Response.json({error:"source_unavailable",outcomeUnknown:true},{status:400});
+  await assert.rejects(sendBossCommand(input,"csrf"),(e:unknown)=>e instanceof CommandFetchError&&e.status===400&&e.outcomeUnknown);
+ }finally{globalThis.fetch=old}
+});
