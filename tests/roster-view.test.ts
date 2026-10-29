@@ -18,3 +18,9 @@ test("labels use authoritative role and observed provider", () => {
  assert.equal(agentLabel(base),"이름 확인 불가");
  assert.deepEqual(["openai","anthropic","qwen",null,"other"].map(rosterProviderLabel),["Codex","Claude","Qwen","제공자 미수집","other"]);
 });
+
+test("inherited property provider names remain literal strings", () => {
+ for (const provider of ["__proto__", "constructor", "toString", "hasOwnProperty"]) {
+  assert.equal(rosterProviderLabel(provider), provider);
+ }
+});

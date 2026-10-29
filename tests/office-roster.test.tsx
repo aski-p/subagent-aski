@@ -23,3 +23,8 @@ test("assigned metadata is concise and approved diagnostic names remain visible"
  assert.doesNotMatch(html,/역할 확인 불가|프로젝트 확인 불가|작업: 확인 불가/);
  assert.doesNotMatch(html,/<span class="unknown">\?<\/span>/);
 });
+
+test("valid inherited-property provider renders as literal diagnostic text",()=>{
+ const html=renderToStaticMarkup(<OfficeRoster agents={[{...base,provider:"__proto__"}]} snapshot={null} visibleCount={20} onShowMore={()=>{}} onSelect={()=>{}}/>);
+ assert.match(html,/__proto__/);
+});

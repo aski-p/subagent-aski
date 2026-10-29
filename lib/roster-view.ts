@@ -10,5 +10,10 @@ export function partitionRoster(agents: AgentView[]): { assigned: AgentView[]; u
 
 export function rosterProviderLabel(provider: string | null): string {
   if (provider === null) return "제공자 미수집";
-  return ({ openai: "Codex", anthropic: "Claude", qwen: "Qwen" } as Record<string, string>)[provider] ?? provider;
+  switch (provider) {
+    case "openai": return "Codex";
+    case "anthropic": return "Claude";
+    case "qwen": return "Qwen";
+    default: return provider;
+  }
 }
