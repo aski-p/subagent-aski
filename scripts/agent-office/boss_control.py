@@ -25,7 +25,10 @@ def protected_path(path):
         ps=str(Path(os.environ['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe')
         script="$ErrorActionPreference='Stop'; $a=Get-Acl -LiteralPath $env:AGENT_OFFICE_ACL_PATH; $u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; if($a.GetOwner([Security.Principal.SecurityIdentifier]).Value -ne $u){exit 1}; foreach($r in $a.Access){if($r.AccessControlType -eq 'Allow' -and $r.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -notin @($u,'S-1-5-18')){exit 1}}"
         encoded=base64.b64encode(script.encode('utf-16le')).decode()
-        subprocess.run([ps,'-NoProfile','-NonInteractive','-EncodedCommand',encoded],env={**os.environ,'AGENT_OFFICE_ACL_PATH':str(path)},check=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10,creationflags=subprocess.CREATE_NO_WINDOW)
+        # pwsh7 module paths cannot be reused by the fixed Windows PowerShell5 ACL child.
+        acl_env={name:value for name,value in os.environ.items() if name.casefold()!='psmodulepath'}
+        acl_env['AGENT_OFFICE_ACL_PATH']=str(path)
+        subprocess.run([ps,'-NoProfile','-NonInteractive','-EncodedCommand',encoded],env=acl_env,check=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10,creationflags=subprocess.CREATE_NO_WINDOW)
     else:
         for item in (path,path.parent):
             info=item.lstat()

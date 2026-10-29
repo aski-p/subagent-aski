@@ -278,4 +278,35 @@ class ContinuationRetentionTest(ClarificationLifecycleTest):
         with store._private_transaction() as conn:
             self.assertIsNone(conn.execute('SELECT continuation_context FROM commands WHERE id=?',(child['id'],)).fetchone()[0])
 
+
+
+class WindowsAclEnvironmentTest(unittest.TestCase):
+    def test_fixed_acl_child_removes_inherited_module_path_without_mutating_parent(self):
+        import boss_control as ctl
+        for module_key in ('PSModulePath','PSMODULEPATH','psmodulepath'):
+            with self.subTest(module_key=module_key),tempfile.TemporaryDirectory() as folder:
+                config=Path(folder)/'config.json';config.write_text('{"synthetic":true}',encoding='utf-8')
+                inherited={module_key:'synthetic-pwsh7-modules','SystemRoot':str(Path(folder)/'synthetic-windows'),'PATH':'synthetic-path','CODEX_THREAD_ID':'synthetic-original-thread'}
+                def acl_child(argv,**options):
+                    if any(k.casefold()=='psmodulepath' for k in options['env']):
+                        raise subprocess.CalledProcessError(1,argv,stderr='CannotAutoloadMatchingModule')
+                    return subprocess.CompletedProcess(argv,0)
+                with patch.dict(os.environ,inherited),patch.object(ctl.sys,'platform','win32'),patch.object(subprocess,'CREATE_NO_WINDOW',0x08000000,create=True),patch.object(subprocess,'run',side_effect=acl_child) as child:
+                    self.assertEqual(ctl.protected_json(str(config)),{'synthetic':True})
+                    self.assertEqual(os.environ[module_key],'synthetic-pwsh7-modules')
+                    argv=child.call_args.args[0];options=child.call_args.kwargs
+                    self.assertEqual(argv[:4],[str(Path(inherited['SystemRoot'])/'System32/WindowsPowerShell/v1.0/powershell.exe'),'-NoProfile','-NonInteractive','-EncodedCommand'])
+                    self.assertFalse(options.get('shell',False));self.assertTrue(options['check'])
+                    self.assertEqual(options['creationflags'],0x08000000);self.assertEqual(options['timeout'],10)
+                    for stream in ('stdin','stdout','stderr'):self.assertIs(options[stream],subprocess.DEVNULL)
+                    child_env={k.casefold():v for k,v in options['env'].items()}
+                    for key in ('SystemRoot','PATH','CODEX_THREAD_ID'):self.assertEqual(child_env[key.casefold()],inherited[key])
+                    self.assertEqual(options['env']['AGENT_OFFICE_ACL_PATH'],str(config))
+    def test_acl_child_failure_still_rejects_before_reading_config(self):
+        import boss_control as ctl
+        with tempfile.TemporaryDirectory() as folder:
+            config=Path(folder)/'config.json';config.write_text('{"synthetic":true}',encoding='utf-8')
+            with patch.dict(os.environ,{'SystemRoot':'/synthetic/windows','PSModulePath':'synthetic-pwsh7-modules'}),patch.object(ctl.sys,'platform','win32'),patch.object(subprocess,'CREATE_NO_WINDOW',0x08000000,create=True),patch.object(subprocess,'run',side_effect=subprocess.CalledProcessError(1,'fixed-acl-child')),patch.object(Path,'open',side_effect=AssertionError('config read before ACL approval')):
+                with self.assertRaises(subprocess.CalledProcessError):ctl.protected_json(str(config))
+
 if __name__=='__main__':unittest.main()
