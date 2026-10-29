@@ -158,7 +158,13 @@ h2 {
   height: 48px;
   flex: none;
   margin-bottom: 8px;
+  display: block;
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #edf3ef;
 }
+.avatar img { position: absolute; width: 480%; height: auto; max-width: none; }
 .role strong {
   font-size: 15px;
 }
