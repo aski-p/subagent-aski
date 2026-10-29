@@ -7,6 +7,7 @@ import {CommandReceipts} from "./command-receipts";
 
 export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivateProject[];onAuthFailure:()=>void}){
  const [context,setContext]=useState<CommandContext|null>(null);
+ const [originals,setOriginals]=useState<Record<string,string>>({});
  const [draft,setDraft]=useState("");const [project,setProject]=useState<string|null>(null);const [reply,setReply]=useState<string|null>(null);
  const [busy,setBusy]=useState(false);const [message,setMessage]=useState("");const [retryAt,setRetryAt]=useState(0);const [clock,setClock]=useState(0);
  const [frozen,setFrozen]=useState<CommandInput|null>(null);const [unknown,setUnknown]=useState(false);const [existing,setExisting]=useState<string|null>(null);
@@ -39,6 +40,7 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
   const payload:CommandInput=same?frozen:{schemaVersion:1,clientRequestId:crypto.randomUUID(),projectId:project,text:trimmed,...(reply?{replyToCommandId:reply}:{})};
   setFrozen(payload);lock.current=true;setBusy(true);setMessage("");setExisting(null);const g=generation.current;
   try{const receipt=await sendBossCommand(payload,context.csrfToken);if(g!==generation.current)return;
+   setOriginals(current=>Object.fromEntries([...Object.entries(current).filter(([id])=>id!==receipt.id),[receipt.id,payload.text]].slice(-50)));
    setContext(c=>c?{...c,receipts:[receipt,...c.receipts.filter(r=>r.id!==receipt.id)]}:c);setDraft("");setReply(null);setFrozen(null);setUnknown(false);setMessage("요청이 접수되었습니다.");void refresh();
   }catch(e){if(g!==generation.current)return;
    if(e instanceof CommandFetchError){
@@ -54,7 +56,7 @@ export function BossCommandComposer({projects,onAuthFailure}:{projects:PrivatePr
  };
  return <section className="boss-chat" aria-labelledby="boss-title">
   <div className="boss-chat-head"><span className="boss-face" aria-hidden="true">👑🙂</span><div><h2 id="boss-title">Boss(총괄)</h2><p>질문과 요청을 남기고 답변을 확인하세요.</p></div><button className="boss-refresh" type="button" onClick={()=>void refresh()}>기록 새로고침</button></div>
-  <CommandReceipts receipts={context?.receipts??[]} onReply={id=>{const parent=context?.receipts.find(r=>r.id===id);if(!busy&&!unknown&&parent){setProject(parent.projectId);setReply(id);input.current?.focus()}}}/>
+  <CommandReceipts receipts={context?.receipts??[]} originals={originals} onReply={id=>{const parent=context?.receipts.find(r=>r.id===id);if(!busy&&!unknown&&parent){setProject(parent.projectId);setReply(id);input.current?.focus()}}}/>
   {context?.nextCursor&&<button className="boss-refresh" type="button" onClick={async()=>{const g=generation.current;try{const page=await fetchCommandContext(undefined,context.nextCursor!);if(g===generation.current)setContext(c=>c?{...c,nextCursor:page.nextCursor,receipts:[...c.receipts,...page.receipts.filter(r=>!c.receipts.some(old=>old.id===r.id))]}:c)}catch(e){if(g!==generation.current)return;if(e instanceof CommandFetchError&&(e.status===401||e.status===403)){generation.current++;onAuthFailure()}else setMessage("이전 기록을 불러오지 못했습니다.")}}}>이전 기록 더 보기</button>}
   <div className="boss-compose-meta"><label>대상 프로젝트 <select value={project??""} disabled={unknown||busy||!!reply} onChange={e=>setProject(e.target.value||null)}><option value="">현재 Boss</option>{project&&!projects.some(p=>p.id===project)&&<option value={project}>연결된 프로젝트</option>}{projects.map(p=><option key={p.id} value={p.id}>{p.label}</option>)}</select></label>{reply&&<span>이어 답변 중 <button type="button" disabled={unknown||busy} onClick={()=>setReply(null)}>취소</button></span>}</div>
   <div className="boss-compose"><textarea ref={input} aria-label="Boss에게 보낼 내용" placeholder="질문이나 요청을 입력하세요" value={draft} disabled={unknown||busy} maxLength={8000} onChange={e=>setDraft(e.target.value)} onCompositionStart={()=>{composing.current=true}} onCompositionEnd={()=>{composing.current=false}} onKeyDown={e=>{if(e.key==="Enter"&&(e.ctrlKey||e.metaKey)&&!composing.current&&!e.nativeEvent.isComposing&&e.nativeEvent.keyCode!==229){e.preventDefault();void submit()}}}/><button type="button" className="boss-send" aria-label={unknown?"같은 요청으로 확인":"요청 보내기"} disabled={busy||!context||remaining>0||!draft.trim()} onClick={()=>void submit()}>{busy?"…":"↑"}</button></div>
